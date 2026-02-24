@@ -18,6 +18,7 @@
 10. [Safety & Destructive Operations](#10-safety--destructive-operations)
 11. [Future Integrations Roadmap](#11-future-integrations-roadmap)
 12. [Known Limitations](#12-known-limitations)
+13. [Testing & Validation](#13-testing--validation)
 
 ---
 
@@ -959,46 +960,187 @@ interface TemplateSlot {
 
 ## 8. Implementation Phases
 
-Phases are ordered to make the server immediately useful at each stage, prioritizing read-only tools first (safe) and destructive tools last (carefully tested).
+Phases are ordered to make the server immediately useful at each stage, prioritizing read-only tools first (safe) and destructive tools last (carefully tested). Each phase's exit criterion requires its associated tests to pass before moving forward.
+
+---
+
+### Pre-Phase A — Unit Test Framework
+
+**Do this before writing any implementation code.**
+
+- Install and configure Vitest + msw
+- Establish `tests/unit/` directory structure mirroring `src/`
+- Write a passing smoke test to confirm the framework works
+- Add `npm test` script (unit tests only, no credentials required)
+- Add `npm run test:integration` script (gated behind `.env.test`)
+
+**Deliverables:**
+```
+package.json
+tsconfig.json
+tsconfig.build.json
+.gitignore
+vitest.config.ts
+vitest.integration.ts
+tests/
+├── unit/
+│   └── smoke.test.ts        # 2 passing tests: basic assertion + msw interception
+├── integration/
+│   └── .gitkeep
+└── setup/
+    ├── msw-server.ts         # shared msw server, wired as setupFile for unit tests
+    └── integration-env.ts    # loads .env.test, fails fast if required vars missing
+```
+
+**Exit criterion:** `npm test` runs and passes a smoke test. No Canvas credentials needed.
+
+---
+
+### Pre-Phase B — Minimal Canvas Test Environment
+
+**Do this before Phase 1 implementation, in parallel with Pre-Phase A.**
+
+1. Create a teacher account at `https://canvas.instructure.com`
+2. Create a course named exactly `"TEST SANDBOX"`
+3. Generate an API token for the teacher account (Profile → Settings → New Access Token)
+4. Create `.env.test` with initial values:
+   ```
+   CANVAS_INSTANCE_URL=https://canvas.instructure.com
+   CANVAS_API_TOKEN=<teacher_token>
+   CANVAS_TEST_COURSE_ID=<course_id>
+   ```
+5. Confirm `.env` and `.env.test` are in `.gitignore`
+6. Run the connectivity integration test suite (see below) and confirm all checks pass.
+7. If the Classic Quizzes check fails: go to Course Settings → Feature Options and disable "New Quizzes", then re-run the test.
+
+**Connectivity test (`tests/integration/connectivity.test.ts`):**
+
+This test suite ships with the repo and is the formal exit criterion for Pre-Phase B. It verifies:
+
+| Test | What it checks |
+|---|---|
+| Authenticates with Canvas API | Token is valid; `GET /api/v1/users/self` returns 200 |
+| Can access the test course | Course ID resolves; teacher has access |
+| Has teacher-level access | Token belongs to an active TeacherEnrollment on the course |
+| Can read and write assignments | Creates and immediately deletes a throwaway assignment to confirm write permissions |
+| Classic Quizzes available | Checks `quizzes_next` feature flag; fails with instructions if New Quizzes is on |
+| Pagination returns Link header | Confirms the instance returns `Link` headers for multi-page responses |
+
+Run with:
+```
+npm run test:integration
+```
+
+**Exit criterion:** All 6 tests in `tests/integration/connectivity.test.ts` pass.
+
+---
+
+### Pre-Phase C — Full Integration Test Environment
+
+**Do this in parallel with Phase 1, must be complete before Phase 2.**
+
+This stage adds student accounts and the seed script so that reporting tools have realistic data to work against.
+
+1. Create 5 student accounts using email `+` addressing (e.g., `you+s1@gmail.com`)
+2. Enroll all 5 as Students in `TEST SANDBOX`
+3. Generate an API token for each student account
+4. Add student tokens to `.env.test`:
+   ```
+   STUDENT0_API_TOKEN=<token>
+   STUDENT1_API_TOKEN=<token>
+   STUDENT2_API_TOKEN=<token>
+   STUDENT3_API_TOKEN=<token>
+   STUDENT4_API_TOKEN=<token>
+   ```
+5. Write `scripts/seed-test-data.ts` using raw `fetch` calls against the Canvas API — **not** the MCP tools. The seed script must be independent of the code it is testing.
+6. The seed script establishes the state defined in Section 13.2 (varied submission/grade states across 5 students and 3 assignments).
+7. Add `npm run seed` script that runs the seed against `CANVAS_INSTANCE_URL` from `.env.test`.
+
+**Exit criterion:** `npm run seed` completes without errors. A manual call to `GET /api/v1/courses/:id/students/submissions` returns submissions matching the table in Section 13.2.
+
+---
 
 ### Phase 1 — Foundation
+
+**Test environment required:** Pre-Phase A + Pre-Phase B
 
 - Project scaffolding: TypeScript, `@modelcontextprotocol/sdk`, build pipeline.
 - Canvas API client: auth, pagination, rate limiting, error normalization.
 - Config manager: read/write `~/.canvas-teacher-mcp/config.json`, schema validation.
 - Tools: `list_courses`, `set_active_course`, `get_active_course`.
 
-**Exit criterion:** Can authenticate to Canvas, list courses, and set/get active course.
+**Tests written in this phase:**
+- Unit: config manager read/write, fuzzy course resolution logic, API client pagination + retry + error normalization (all mocked)
+- Integration: `list_courses` returns real courses, `set_active_course("TEST SANDBOX")` resolves correct ID, `courseCache` is written to `.env.test` config
+- MCP protocol: tool list, schema validation for context tools
+
+**Exit criterion:** Can authenticate to Canvas, list courses, and set/get active course. All Phase 1 tests pass.
+
+---
 
 ### Phase 2 — Read-Only Reporting
+
+**Test environment required:** Pre-Phase A + Pre-Phase B + Pre-Phase C (seed must be run)
 
 - Tools: `list_modules`, `get_module_summary`, `list_assignment_groups`.
 - Tools: `get_class_grade_summary`, `get_assignment_breakdown`, `get_student_report`, `get_missing_assignments`, `get_late_assignments`.
 
-**Exit criterion:** Can generate a full grade health report for a class and identify students needing follow-up.
+**Tests written in this phase:**
+- Unit: grade/submission data transformations, missing/late flag filtering, pagination across large result sets (mocked)
+- Integration: all reporting suites against seeded data — results verified against known seed state from Section 13.2
+- MCP protocol: response format for all reporting tools
+
+**Exit criterion:** Can generate a full grade health report for a class and identify students needing follow-up. All Phase 2 tests pass against seeded data.
+
+---
 
 ### Phase 3 — Low-Level Content Creation
+
+**Test environment required:** Pre-Phase A + Pre-Phase B (reset before each integration run)
 
 - Tools: `create_assignment`, `update_assignment`, `create_quiz`, `update_quiz`.
 - Tools: `add_module_item`, `update_module_item`, `remove_module_item`, `update_module`, `delete_module`.
 - Assignment description HTML template rendering (Handlebars).
 
-**Exit criterion:** Can create and modify individual assignments and module items.
+**Tests written in this phase:**
+- Unit: Handlebars template rendering (H3 + bold + link structure), input validation for all tools, `dry_run` validation path
+- Integration: `create_assignment` round-trip (create → GET → verify fields), `create_quiz` with Classic Quizzes, module item CRUD sequence
+- MCP protocol: write tool schema validation
+
+**Exit criterion:** Can create and modify individual assignments and module items. All Phase 3 tests pass.
+
+---
 
 ### Phase 4 — High-Level Module Creation
+
+**Test environment required:** Pre-Phase A + Pre-Phase B (reset before each integration run)
 
 - Module template system: loader, renderer, slot validation.
 - Tools: `create_lesson_module`, `create_solution_module`, `clone_module`.
 - Exit card quiz creation with config-driven question template.
 
-**Exit criterion:** Can create a complete lesson module + solution module pair from a single high-level tool call.
+**Tests written in this phase:**
+- Unit: template slot validation, `dry_run` output for all four template types, partial failure reporting
+- Integration: full lesson + solution module creation suites (see Section 13.2), clone module with week number substitution, `create_solution_module` lock date + prerequisite verified via GET
+- MCP protocol: high-level tool schemas
+
+**Exit criterion:** Can create a complete lesson module + solution module pair from a single high-level tool call. All Phase 4 tests pass.
+
+---
 
 ### Phase 5 — Destructive Operations
+
+**Test environment required:** Pre-Phase A + Pre-Phase B (integration tests rely on resetting the test course)
 
 - Tools: `preview_course_reset`, `reset_course_sandbox`.
 - Full confirmation safety protocol (see Section 10).
 
-**Exit criterion:** Can safely clear a sandbox course with explicit confirmation.
+**Tests written in this phase:**
+- Unit: confirmation text matching (case-sensitive), wrong text rejection
+- Integration: `preview_course_reset` counts match actual content; `reset_course_sandbox` with wrong confirmation text rejected; with correct text, all modules/assignments/quizzes/pages deleted; enrollments and files preserved
+- MCP protocol: destructive tool schemas
+
+**Exit criterion:** Can safely clear a sandbox course with explicit confirmation. All Phase 5 tests pass.
 
 ---
 
@@ -1105,9 +1247,200 @@ These are explicitly planned future capabilities, documented here so that design
 | Limitation | Detail |
 |---|---|
 | Classic Quizzes only | New Quizzes (Canvas Quiz Engine) has a different, less complete API. All quiz tools target Classic Quizzes. |
+| Quiz creation returns 200, not 201 | `POST /api/v1/courses/:id/quizzes` returns HTTP 200 on success. Assignment creation returns 201. The API client must accept both — do not use a single status-code check across all POST calls. Verified against canvas.instructure.com. |
+| `login_id` not exposed on free accounts | `GET /api/v1/users/self` does not return `login_id` on canvas.instructure.com free accounts. Not a functional issue — `id` is used for all API operations. |
 | Canvas Studio | Videos must be embedded manually post-creation. The API does not expose a public endpoint for creating Studio media items programmatically. |
 | Content Migrations async | The Canvas Content Migrations API (used for full course copy) is asynchronous — it returns a job ID and the result is available later. `clone_module` avoids this by re-creating objects directly via the item-level APIs, which is synchronous but slower for large modules. |
 | `reset_content` endpoint | Canvas has a `DELETE /api/v1/courses/:id/reset_content` endpoint but it typically requires admin permissions and resets enrollments too. The surgical deletion approach in `reset_course_sandbox` is used instead. |
 | Rate limits | Canvas imposes rate limits that vary by institution. The client applies conservative delays but very large batch operations (e.g., full sandbox reset on a large course) may hit limits and require retries. |
 | Submission URL validation | Canvas does not validate that a submitted URL is actually a valid Colab notebook. The tool cannot enforce correct submission format. |
 | Pagination maximum | Canvas caps per-page results at 100. Courses with more than 100 items of any type (assignments, students, etc.) require multiple paginated requests, which is handled automatically by the client. |
+
+---
+
+## 13. Testing & Validation
+
+### 13.1 Test Environment
+
+All integration tests run against a **free Instructure Canvas account** (`https://canvas.instructure.com`), completely separate from the institution's managed Canvas instance. This provides full API access with zero risk of touching live courses.
+
+**Why this environment:**
+- Isolated from institutional data and students
+- Full account control — can create courses, users, and tokens freely
+- Canvas REST API is identical across all hosted instances
+- Destructive operations (sandbox reset) can run safely
+
+**Initial setup steps (one-time):**
+1. Create a teacher account at `https://canvas.instructure.com`
+2. Create 4–5 student accounts using email `+` addressing (e.g., `you+s1@gmail.com` through `you+s5@gmail.com`)
+3. Create a test course named `"TEST SANDBOX"` — enroll all student accounts as Students
+4. Generate an API token for the teacher account (Profile → Settings → New Access Token)
+5. Generate an API token for each student account (same flow, logged in as each student)
+6. **Verify Classic Quizzes is available:** In the test course, go to Settings → Feature Options and confirm Classic Quizzes is enabled. New Quizzes may be the default on `canvas.instructure.com` and must be switched off.
+7. Store all tokens in `.env.test` (see Section 13.4)
+
+**What is NOT available on `canvas.instructure.com`:**
+- Canvas Studio (separately licensed product) — does not affect testing since video pages are embedded manually
+
+---
+
+### 13.2 Testing Layers
+
+#### Layer 1 — Unit Tests
+
+**Purpose:** Test internal logic that does not require a real Canvas instance. All HTTP calls are mocked.
+
+**Framework:** Vitest + `msw` (Mock Service Worker for fetch interception)
+
+**What is unit tested:**
+
+| Area | What is tested |
+|---|---|
+| Canvas API client | Pagination: follows `Link` headers across multiple pages |
+| | Rate limiting: delays when `X-Rate-Limit-Remaining < 10` |
+| | Retry: exponential backoff on HTTP 429, max 3 attempts |
+| | Error normalization: Canvas error shapes → `ToolError` |
+| Course resolution | Fuzzy match: `"408 spring"` matches `"CSC408 Spring 2026"` |
+| | Disambiguation: multiple matches returns list, not first result |
+| | No match: returns filtered course list from `courseCodes` |
+| | Term token extraction: correctly splits code vs. term tokens |
+| Template rendering | Handlebars assignment description → expected HTML structure |
+| | H3 + bold + link rendered correctly for notebook URL |
+| | Exit card title substitutes `{{week}}` correctly |
+| | Missing optional variables degrade gracefully |
+| Config manager | Read: parses valid config file, applies defaults for missing keys |
+| | Write: `courseCache` populated after resolution, persisted to disk |
+| | Validation: missing `instanceUrl` or `apiToken` returns clear error |
+| Input validation | Tools reject missing required fields before any API call |
+| | `dry_run: true` performs validation only, returns what would be created |
+
+**Run command:** `npm test` (runs on every push, no credentials required)
+
+---
+
+#### Layer 2 — Integration Tests
+
+**Purpose:** Verify correct end-to-end behavior against the real Canvas API. These tests create, read, and delete real content in the test environment.
+
+**Framework:** Vitest with a separate config (`vitest.integration.ts`), tagged `integration`
+
+**Run command:** `npm run test:integration` (requires `.env.test` — opt-in only)
+
+**State management strategy:**
+- Each test suite begins by calling `reset_course_sandbox` on the test course to establish a clean slate
+- The reset itself is validated as part of the suite setup (confirming the course is empty after reset)
+- After reset, a **seed script** (`scripts/seed-test-data.ts`) creates a known content state
+- Tests then run assertions against that known state
+- No cleanup at the end — the next suite's reset handles it
+
+**Seed script design (Option 3):**
+- The seed script uses the **teacher API token** for all content creation (modules, assignments, quizzes)
+- The seed script uses **student API tokens** to submit assignments on behalf of each student and to set varied submission states (submitted, missing, late)
+- The seed script uses the **teacher API token** to grade a subset of submissions
+- Once seeding is complete, student tokens are no longer used — all test assertions use the teacher token only
+- Student tokens are stored in `.env.test` but are only read by `scripts/seed-test-data.ts`, never by the MCP server itself or the test assertions
+
+**Seeded state after running seed script:**
+
+| Student | Assignment 1 | Assignment 2 | Assignment 3 | Exit Card |
+|---|---|---|---|---|
+| Student 1 | Submitted + graded (10/10) | Submitted + graded (8/10) | Submitted, ungraded | Submitted |
+| Student 2 | Submitted + graded (7/10) | Missing | Missing | Not submitted |
+| Student 3 | Late + graded (9/10) | Submitted + graded (10/10) | Submitted, ungraded | Submitted |
+| Student 4 | Missing | Missing | Missing | Not submitted |
+| Student 5 | Submitted + graded (5/10) | Late, ungraded | Submitted + graded (10/10) | Submitted |
+
+This state exercises every combination that reporting tools need to handle.
+
+**Integration test suites:**
+
+| Suite | What is verified |
+|---|---|
+| **Course resolution** | `set_active_course("TEST SANDBOX")` resolves to correct Canvas ID; fuzzy match works against real course list |
+| **Module creation — lesson** | `create_lesson_module` with `later-standard` template produces correct module structure: right number of items, correct SubHeader names, correct item types in correct order, completion requirements set on each graded item |
+| **Module creation — solution** | `create_solution_module` sets `unlock_at` and `prerequisite_module_ids` correctly on the Canvas object (verified via `GET /modules/:id`); ExternalUrl items have correct URLs and `new_tab: true` |
+| **Module creation — earlier template** | Same as lesson suite but verifies TO-DO structure, reminder item submission type is `none`, video section SubHeader present |
+| **Partial failure behavior** | Mock one mid-sequence Canvas call to return 500; verify tool reports exactly what was created before failure and halts |
+| **Clone module** | Clones a module from a second test course; verifies item titles, types, and positions match source with week number substituted |
+| **Grade reporting** | `get_class_grade_summary` returns correct scores and missing counts matching seeded state; `get_assignment_breakdown` shows correct per-student data; `get_student_report` for Student 4 shows all missing |
+| **Missing/late reporting** | `get_missing_assignments` returns Students 2, 4 with correct assignment lists; `get_late_assignments` returns Students 3, 5 |
+| **Sandbox reset** | `preview_course_reset` lists correct counts; `reset_course_sandbox` with wrong confirmation text is rejected; with correct text, all modules/assignments/quizzes/pages deleted; enrollments preserved |
+
+---
+
+#### Layer 3 — MCP Protocol Tests
+
+**Purpose:** Verify the server correctly speaks the MCP protocol — tool discovery, schema validation, and response format.
+
+**Tool:** `@modelcontextprotocol/inspector` (official Instructure MCP debugger)
+
+**What is verified:**
+- All tools appear in the tool list with correct names and descriptions
+- Input schemas correctly reject invalid inputs (wrong types, missing required fields)
+- Tool responses are valid MCP `CallToolResult` objects
+- Error responses are properly formatted MCP errors, not uncaught exceptions
+
+**Run command:** `npm run test:mcp` (starts the server and runs inspector against it with mocked Canvas responses)
+
+**When to run:** Once per tool implementation, and as part of pre-release validation for each phase.
+
+---
+
+### 13.3 `dry_run` Parameter
+
+`create_lesson_module` and `create_solution_module` both accept an optional `dry_run: true` parameter. When set:
+- Full input validation runs (template slot matching, required field checks, ID resolution)
+- No Canvas API write calls are made
+- The tool returns a preview of what would be created: item list with types, titles, and resolved IDs
+- Read-only Canvas calls (e.g., verifying a `lesson_module_id` exists for `create_solution_module`) are still made
+
+This supports two use cases:
+1. **Unit testing:** Input validation logic is fully exercisable without mocking write endpoints
+2. **Instructor preview:** Before committing a large module creation, the instructor can confirm the structure looks right
+
+---
+
+### 13.4 Environment Files
+
+```
+# .env                  — production credentials (never committed)
+CANVAS_INSTANCE_URL=https://your-institution.instructure.com
+CANVAS_API_TOKEN=your_production_token
+
+# .env.test             — test credentials (never committed)
+CANVAS_INSTANCE_URL=https://canvas.instructure.com
+CANVAS_API_TOKEN=your_test_teacher_token
+CANVAS_TEST_COURSE_ID=12345
+STUDENT0_API_TOKEN=student0_token
+STUDENT1_API_TOKEN=student1_token
+STUDENT2_API_TOKEN=student2_token
+STUDENT3_API_TOKEN=student3_token
+STUDENT4_API_TOKEN=student4_token
+```
+
+Both files are listed in `.gitignore`. The MCP server itself only ever reads `CANVAS_INSTANCE_URL` and `CANVAS_API_TOKEN`. Student tokens are read exclusively by `scripts/seed-test-data.ts`.
+
+---
+
+### 13.5 Test Coverage by Implementation Phase
+
+Each phase's exit criterion includes passing its associated tests before moving to the next phase.
+
+| Phase | Unit tests | Integration tests | MCP protocol |
+|---|---|---|---|
+| 1 — Foundation | Config manager, client pagination/retry/auth | Course resolution against real Canvas | Tool list, schema validation |
+| 2 — Reporting | Grade/submission data transformations, missing/late logic | All reporting suites against seeded data | Response format for all reporting tools |
+| 3 — Low-level creation | Input validation, template rendering | `add_module_item`, `create_assignment`, `create_quiz` round-trips | Write tool schema validation |
+| 4 — High-level creation | `dry_run` validation, slot matching, partial failure | Lesson + solution module suites, clone suite | High-level tool schemas |
+| 5 — Destructive ops | Confirmation text matching | Full sandbox reset suite | Destructive tool schemas |
+
+---
+
+### 13.6 What is Not Tested
+
+| Area | Reason | Mitigation |
+|---|---|---|
+| Canvas Studio embed HTML | Not available on test instance; embed is manual anyway | Manual verification against institutional Canvas |
+| New Quizzes API | Out of scope | N/A |
+| Institutional rate limits | Test instance has different limits than institution | Monitor `X-Rate-Limit-Remaining` in production; adjust client delays if needed |
+| Multi-term course disambiguation at institution | Test instance may not replicate exact term structure | Manual verification of `set_active_course` during first institutional use |

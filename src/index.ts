@@ -1,0 +1,19 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { ConfigManager } from './config/manager.js'
+import { CanvasClient } from './canvas/client.js'
+import { registerContextTools } from './tools/context.js'
+
+async function main() {
+  const configManager = new ConfigManager()
+  const config = configManager.read()
+  const client = new CanvasClient(config.canvas)
+  const server = new McpServer({ name: 'canvas-teacher-mcp', version: '0.1.0' })
+  registerContextTools(server, client, configManager)
+  await server.connect(new StdioServerTransport())
+}
+
+main().catch((err) => {
+  process.stderr.write(`Fatal: ${(err as Error).message}\n`)
+  process.exit(1)
+})

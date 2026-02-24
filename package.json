@@ -1,0 +1,33 @@
+{
+  "name": "canvas-teacher-mcp",
+  "version": "0.1.0",
+  "description": "Teacher-facing MCP server for Canvas LMS",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "canvas-teacher-mcp": "dist/index.js" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.ts",
+    "test:coverage": "vitest run --coverage --config vitest.config.ts",
+    "seed": "tsx scripts/seed-test-data.ts",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "dotenv": "^16.0.0",
+    "msw": "^2.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "zod": "^4.3.6"
+  }
+}
