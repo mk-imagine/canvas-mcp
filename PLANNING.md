@@ -47,8 +47,8 @@ A single instructor managing 5 sequential courses in a certificate program, ofte
 
 ### Scope
 
-- **In scope:** Module creation, assignment/quiz management, grade/submission reporting, sandbox reset, course context switching.
-- **Out of scope (for now):** Canvas Studio video embedding (manual), New Quizzes, student communication/messaging, LTI tool configuration.
+- **In scope:** Module creation, assignment/quiz/page management, discussion/announcement/file management, grade/submission reporting, complete course reset, course context switching.
+- **Out of scope (for now):** Canvas Studio video embedding (manual), New Quizzes, LTI tool configuration, calendar events, learning outcomes.
 - **Future scope:** Zoom MCP integration (attendance grading), YouTube MCP integration (video embedding), walkthrough video modules.
 
 ### Assignment Context
@@ -731,6 +731,60 @@ All tools accept an optional `course_id` parameter. If omitted, the active cours
 
 ---
 
+#### `delete_discussion`
+
+**Purpose:** Permanently delete a discussion topic.
+
+**Inputs:**
+- `topic_id` (number, required).
+- `course_id` (number, optional).
+
+**Canvas API Calls:**
+- `DELETE /api/v1/courses/:id/discussion_topics/:topic_id`
+
+**Note:** Graded discussion topics are also assignments. Deleting the discussion topic deletes its associated assignment (and vice versa).
+
+---
+
+#### `delete_announcement`
+
+**Purpose:** Permanently delete an announcement. (Announcements are discussion topics with `is_announcement=true`.)
+
+**Inputs:**
+- `topic_id` (number, required).
+- `course_id` (number, optional).
+
+**Canvas API Calls:**
+- `DELETE /api/v1/courses/:id/discussion_topics/:topic_id`
+
+---
+
+#### `delete_file`
+
+**Purpose:** Permanently delete a file from the course.
+
+**Inputs:**
+- `file_id` (number, required).
+
+**Canvas API Calls:**
+- `DELETE /api/v1/files/:file_id`
+
+**Note:** File deletion is irreversible — there is no trash/recycle bin via the API.
+
+---
+
+#### `clear_syllabus`
+
+**Purpose:** Clear the course syllabus body (set to empty string).
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Canvas API Calls:**
+- `PUT /api/v1/courses/:id` with `{ course: { syllabus_body: '' } }`
+
+---
+
 ### 5.5 Reporting Tools
 
 All reporting tools return structured data suitable for display as a table or summary narrative. They join multiple Canvas API responses internally.
@@ -873,7 +927,7 @@ All reporting tools return structured data suitable for display as a table or su
 
 ---
 
-### 5.6 Sandbox Tools
+### 5.6 Reset Tools
 
 See [Section 10](#10-safety--destructive-operations) for the full safety protocol.
 
@@ -894,27 +948,44 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
     "modules": 6,
     "assignments": 24,
     "quizzes": 12,
-    "pages": 18
+    "pages": 18,
+    "discussions": 4,
+    "announcements": 2,
+    "files": 8,
+    "rubrics": 6,
+    "assignment_groups": 3
+  },
+  "would_clear": {
+    "syllabus": true
   },
   "preserves": {
-    "enrollments": 22,
-    "files": "not touched"
+    "enrollments": "not touched",
+    "sections": "not touched",
+    "settings": "not touched",
+    "navigation": "not touched",
+    "external_tools": "not touched"
   },
   "warning": "This action cannot be undone. Run reset_course with confirmation_text = \"CSC 408 Sandbox\" to proceed."
 }
 ```
 
 **Canvas API Calls:**
+- `GET /api/v1/courses/:id` (for course name + syllabus_body)
 - `GET /api/v1/courses/:id/modules`
 - `GET /api/v1/courses/:id/assignments`
 - `GET /api/v1/courses/:id/quizzes`
 - `GET /api/v1/courses/:id/pages`
+- `GET /api/v1/courses/:id/discussion_topics`
+- `GET /api/v1/courses/:id/discussion_topics?only_announcements=true`
+- `GET /api/v1/courses/:id/files`
+- `GET /api/v1/courses/:id/rubrics`
+- `GET /api/v1/courses/:id/assignment_groups`
 
 ---
 
 #### `reset_course`
 
-**Purpose:** Permanently delete all modules, assignments, quizzes, and pages from a course. Preserves student enrollments and files.
+**Purpose:** Permanently delete all content from a course, leaving it completely empty except for enrollments and configuration. Deletes: modules, assignments, quizzes, discussion topics, announcements, pages, files, rubrics, and custom assignment groups. Clears the syllabus body.
 
 **Inputs:**
 - `confirmation_text` (string, required): Must exactly match the course name as returned by the API. Case-sensitive.
@@ -924,12 +995,23 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
 
 **Canvas API Calls (sequential, each paginated):**
 1. `GET /api/v1/courses/:id` — fetch course name and validate `confirmation_text`
-2. `GET /api/v1/courses/:id/modules` → `DELETE /api/v1/courses/:id/modules/:id` for each
-3. `GET /api/v1/courses/:id/assignments` → `DELETE /api/v1/courses/:id/assignments/:id` for each
-4. `GET /api/v1/courses/:id/quizzes` → `DELETE /api/v1/courses/:id/quizzes/:id` for each (note: quiz-backed assignments are already deleted in step 3, so most will 404 — handled gracefully)
-5. `GET /api/v1/courses/:id/pages` → for each page: if `front_page === true`, `PUT /pages/:url` with `{ front_page: false }` first, then `DELETE /api/v1/courses/:id/pages/:url`
+2. `GET /api/v1/courses/:id/modules` → `DELETE .../modules/:id` for each
+3. `GET /api/v1/courses/:id/assignments` → `DELETE .../assignments/:id` for each
+4. `GET /api/v1/courses/:id/quizzes` → `DELETE .../quizzes/:id` for each (note: quiz-backed assignments already deleted in step 3 — most will 404, handled gracefully)
+5. `GET /api/v1/courses/:id/discussion_topics` → `DELETE .../discussion_topics/:id` for each (note: graded discussions already deleted in step 3 — some will 404, handled gracefully)
+6. `GET /api/v1/courses/:id/pages` → for each page: if `front_page === true`, `PUT /pages/:url` with `{ front_page: false }` first, then `DELETE .../pages/:url`
+7. `GET /api/v1/courses/:id/files` → `DELETE /api/v1/files/:id` for each
+8. `GET /api/v1/courses/:id/rubrics` → `DELETE .../rubrics/:id` for each (orphans from deleted assignments)
+9. `GET /api/v1/courses/:id/assignment_groups` → `DELETE .../assignment_groups/:id` for each (all empty after step 3; Canvas keeps at least one — skip if last deletion errors)
+10. `PUT /api/v1/courses/:id` with `{ course: { syllabus_body: '' } }` — clear syllabus
 
-**Notes:** Deletion happens in the order listed. Module deletion removes module structure but not underlying content objects; Steps 3–5 clean those up. Step 5 auto-unsets front page designation before deleting — Canvas forbids deleting the front page directly. See Section 10 for additional safety guards.
+**Notes:** Deletion happens in the order listed. Module deletion removes module structure but not underlying content objects; steps 3–10 clean those up. Several content types overlap (quizzes ↔ assignments, graded discussions ↔ assignments), so later steps will encounter 404s from content already removed in earlier steps — all handled gracefully. See Section 10 for additional safety guards.
+
+**What is preserved (not deleted):**
+- Enrollments and sections (the roster)
+- Course settings and navigation tab layout
+- External tools (LTI configurations — typically institutional)
+- Grading standards (account-level, no course-level delete API)
 
 ---
 
@@ -952,7 +1034,8 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
 | POST     | `/api/v1/courses/:id/assignments`                                     | `create_assignment`, `create_lesson_module` |
 | PUT      | `/api/v1/courses/:id/assignments/:assignment_id`                      | `update_assignment` |
 | DELETE   | `/api/v1/courses/:id/assignments/:assignment_id`                      | `delete_assignment`, `reset_course` |
-| GET      | `/api/v1/courses/:id/assignment_groups`                               | `list_assignment_groups` |
+| GET      | `/api/v1/courses/:id/assignment_groups`                               | `list_assignment_groups`, `preview_course_reset` |
+| DELETE   | `/api/v1/courses/:id/assignment_groups/:id`                           | `reset_course` |
 | GET      | `/api/v1/courses/:id/quizzes`                                         | `preview_course_reset` |
 | POST     | `/api/v1/courses/:id/quizzes`                                         | `create_quiz`, `create_lesson_module` |
 | POST     | `/api/v1/courses/:id/quizzes/:quiz_id/questions`                      | `create_quiz` |
@@ -963,6 +1046,14 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
 | POST     | `/api/v1/courses/:id/pages`                                           | `create_page`, `create_lesson_module` |
 | PUT      | `/api/v1/courses/:id/pages/:url`                                      | `reset_course` (unset front page before delete) |
 | DELETE   | `/api/v1/courses/:id/pages/:url`                                      | `delete_page`, `reset_course` |
+| GET      | `/api/v1/courses/:id/discussion_topics`                               | `preview_course_reset`, `reset_course` |
+| GET      | `/api/v1/courses/:id/discussion_topics?only_announcements=true`       | `preview_course_reset` |
+| DELETE   | `/api/v1/courses/:id/discussion_topics/:id`                           | `delete_discussion`, `delete_announcement`, `reset_course` |
+| GET      | `/api/v1/courses/:id/files`                                           | `preview_course_reset`, `reset_course` |
+| DELETE   | `/api/v1/files/:id`                                                   | `delete_file`, `reset_course` |
+| GET      | `/api/v1/courses/:id/rubrics`                                         | `preview_course_reset`, `reset_course` |
+| DELETE   | `/api/v1/courses/:id/rubrics/:id`                                     | `reset_course` |
+| PUT      | `/api/v1/courses/:id`                                                 | `clear_syllabus`, `reset_course` (clear syllabus_body) |
 | GET      | `/api/v1/courses/:id/enrollments`                                     | `get_class_grade_summary`, `get_student_report` |
 | GET      | `/api/v1/courses/:id/students/submissions`                            | `get_class_grade_summary`, `get_missing_assignments`, `get_late_assignments`, `get_student_report` |
 | GET      | `/api/v1/courses/:id/assignments/:assignment_id/submissions`          | `get_assignment_breakdown` |
@@ -1251,6 +1342,60 @@ This stage adds student accounts and the seed script so that reporting tools hav
 
 ---
 
+### Phase 5b — Complete Course Reset (missed from original plan)
+
+**Prerequisites:** Phase 5 complete.
+
+Phase 5 implemented `reset_course` but only deletes modules, assignments, quizzes, and pages. Several course content types were missed from the original plan and must be added for a truly complete reset.
+
+**Missing content types to add:**
+
+| Content Type | Standalone Tool | Reset Step | API Endpoints | Notes |
+|---|---|---|---|---|
+| **Discussion Topics** | `delete_discussion` | Step 5 (after assignments) | `GET .../discussion_topics` → `DELETE .../discussion_topics/:id` | Graded discussions are also assignments — some will 404 after step 3, handle gracefully. Same overlap pattern as quizzes ↔ assignments. |
+| **Announcements** | `delete_announcement` | Included in step 5 | `GET .../discussion_topics?only_announcements=true` → `DELETE .../discussion_topics/:id` | Announcements are discussion topics with `is_announcement=true`. A single pass over all discussion topics covers both. Preview should count them separately for clarity. |
+| **Files** | `delete_file` | Step 7 (after pages) | `GET .../files` → `DELETE /api/v1/files/:id` | File deletion is **irreversible** — no trash/recycle bin via the API. |
+| **Syllabus** | `clear_syllabus` | Step 10 (last) | `PUT /api/v1/courses/:id` with `{ course: { syllabus_body: '' } }` | Not a delete — clears the syllabus body to empty string. |
+| **Rubrics** | — (no standalone tool needed) | Step 8 (after files) | `GET .../rubrics` → `DELETE .../rubrics/:id` | Orphaned rubrics remain after assignment deletion. Clean up after assignments. |
+| **Assignment Groups** | — (no standalone tool needed) | Step 9 (after rubrics) | `GET .../assignment_groups` → `DELETE .../assignment_groups/:id` | All groups are empty after step 3. Canvas always keeps at least one group — skip error on last deletion. |
+
+**New canvas/ module files:** `src/canvas/discussions.ts`, `src/canvas/files.ts`, `src/canvas/rubrics.ts`
+
+**Modified files:**
+- `src/canvas/courses.ts` — add `updateCourse` for syllabus clearing
+- `src/canvas/assignments.ts` — add `listAssignmentGroups` (already has read), add `deleteAssignmentGroup`
+- `src/tools/content.ts` — register `delete_discussion`, `delete_announcement`, `delete_file`, `clear_syllabus`
+- `src/tools/reset.ts` — add steps 5–10 to `reset_course`; update `preview_course_reset` to count all new types
+
+**Updated deletion order for `reset_course`:**
+1. Modules (structure only)
+2. Assignments (also removes graded discussions + quiz-backed assignments)
+3. Quizzes (remaining; handle 404s)
+4. Discussion topics including announcements (remaining; handle 404s from graded discussions)
+5. Pages (unset front page first)
+6. Files
+7. Rubrics (orphans from deleted assignments)
+8. Assignment groups (all empty; skip last if Canvas errors)
+9. Clear syllabus body
+
+**Content type overlap diagram:**
+```
+assignments ←→ quizzes        (every quiz is an assignment)
+assignments ←→ discussions    (graded discussions are assignments)
+discussions ←→ announcements  (announcements are discussion topics)
+```
+Deleting assignments first cascades to quiz-backed and graded-discussion assignments. Steps 3–4 clean up the remaining standalone quizzes and discussions, handling 404s from already-deleted items.
+
+**What is explicitly preserved:**
+- Enrollments and sections (roster)
+- Course settings and navigation tab layout
+- External tools / LTI configurations (institutional config, not content)
+- Grading standards (account-level, no course-level delete API)
+
+**Exit criterion:** `reset_course` deletes all content types listed above. `preview_course_reset` counts all types. Post-reset preview shows all zeros. Standalone tools (`delete_discussion`, `delete_announcement`, `delete_file`, `clear_syllabus`) work independently.
+
+---
+
 ### Phase 6 — FERPA PII Blinding
 
 **Prerequisites:** Phase 2 complete (reporting tools must exist before adding blinding middleware).
@@ -1307,15 +1452,15 @@ High-level tools (`create_lesson_module`, `create_solution_module`) validate the
 
 ### Scope of Destructive Tools
 
-Only `reset_course`, `delete_module`, `delete_assignment`, `delete_quiz`, and `delete_page` are considered destructive. All other tools create or update but do not permanently delete course content.
+The following tools permanently delete course content: `reset_course`, `delete_module`, `delete_assignment`, `delete_quiz`, `delete_page`, `delete_discussion`, `delete_announcement`, `delete_file`, `clear_syllabus`.
 
 ### `reset_course` Safety Protocol
 
 1. **Naming guard:** Before calling this tool, the AI must call `preview_course_reset` and show the output to the user.
 2. **Confirmation text:** The tool requires `confirmation_text` to exactly match the Canvas course name (case-sensitive, character-for-character). The AI must ask the user to type the name explicitly.
-3. **Enrollment preservation:** Student enrollment records and file uploads are never touched.
-4. **No cascade to files:** Canvas file objects in the Files section are not deleted.
-5. **Front page handling:** Before deleting pages, `reset_course` automatically unsets any front page designation via `PUT /pages/:url` with `{ front_page: false }`. This is necessary because Canvas forbids deleting the front page directly.
+3. **Enrollment preservation:** Student enrollment records, sections, and course settings are never touched.
+4. **Front page handling:** Before deleting pages, `reset_course` automatically unsets any front page designation via `PUT /pages/:url` with `{ front_page: false }`. This is necessary because Canvas forbids deleting the front page directly.
+5. **File deletion is irreversible:** Unlike other content, deleted files have no recycle bin in the Canvas API. The preview shows file counts explicitly so the user can confirm.
 
 ### `delete_page` Front Page Guard
 
@@ -1387,7 +1532,12 @@ These are explicitly planned future capabilities, documented here so that design
 | `login_id` not exposed on free accounts | `GET /api/v1/users/self` does not return `login_id` on canvas.instructure.com free accounts. Not a functional issue — `id` is used for all API operations. |
 | Canvas Studio | Videos must be embedded manually post-creation. The API does not expose a public endpoint for creating Studio media items programmatically. |
 | Content Migrations async | The Canvas Content Migrations API (used for full course copy) is asynchronous — it returns a job ID and the result is available later. `clone_module` avoids this by re-creating objects directly via the item-level APIs, which is synchronous but slower for large modules. |
-| `reset_content` endpoint | Canvas has a `DELETE /api/v1/courses/:id/reset_content` endpoint but it typically requires admin permissions and resets enrollments too. The surgical deletion approach in `reset_course` is used instead. |
+| `reset_content` endpoint | Canvas has a `POST /api/v1/courses/:id/reset_content` endpoint but it **changes the course ID** (deletes the course and creates a new one). This breaks external bookmarks, API integrations, and LTI configurations. The surgical deletion approach in `reset_course` preserves the course ID. Additionally, `reset_content` requires admin-level "Courses - Reset" permission. |
+| File deletion is irreversible | `DELETE /api/v1/files/:id` has no undo — Canvas provides no recycle bin via the API. The `reset_course` preview explicitly shows file counts so the user can confirm. |
+| Assignment group minimum | Canvas always keeps at least one assignment group per course. `reset_course` deletes all groups but handles the error on the last one gracefully. |
+| Graded discussion ↔ assignment overlap | Graded discussions are also assignments. Deleting assignments in `reset_course` step 3 cascade-deletes their graded discussions. The discussion deletion step (step 5) handles the resulting 404s gracefully, same pattern as the quiz ↔ assignment overlap. |
+| Calendar events | Course-level calendar events (e.g., office hours, review sessions) are not deleted by `reset_course`. These are less common and considered optional cleanup. API: `GET /calendar_events?context_codes[]=course_X` → `DELETE /calendar_events/:id`. |
+| Learning outcomes | Outcome groups/links are not deleted by `reset_course`. Often institution-level and shared across courses. API exists (`GET/DELETE .../outcome_groups/:id`) but rarely needed for a content reset. |
 | Rate limits | Canvas imposes rate limits that vary by institution. The client applies conservative delays but very large batch operations (e.g., full sandbox reset on a large course) may hit limits and require retries. |
 | Submission URL validation | Canvas does not validate that a submitted URL is actually a valid Colab notebook. The tool cannot enforce correct submission format. |
 | Pagination maximum | Canvas caps per-page results at 100. Courses with more than 100 items of any type (assignments, students, etc.) require multiple paginated requests, which is handled automatically by the client. |
