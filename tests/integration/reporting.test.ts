@@ -9,6 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { CanvasClient } from '../../src/canvas/client.js'
 import { ConfigManager } from '../../src/config/manager.js'
 import { registerReportingTools } from '../../src/tools/reporting.js'
+import { SecureStore } from '../../src/security/secure-store.js'
 
 const instanceUrl = process.env.CANVAS_INSTANCE_URL!
 const apiToken = process.env.CANVAS_API_TOKEN!
@@ -27,18 +28,19 @@ function makeTmpConfigPath(): string {
   return join(tmpdir(), `canvas-int-reporting-${suffix}`, 'config.json')
 }
 
-async function makeIntegrationClient(configPath: string) {
+async function makeIntegrationClient(configPath: string, store?: SecureStore) {
+  const secureStore = store ?? new SecureStore()
   const configManager = new ConfigManager(configPath)
   const canvasClient = new CanvasClient({ instanceUrl, apiToken })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerReportingTools(mcpServer, canvasClient, configManager)
+  registerReportingTools(mcpServer, canvasClient, configManager, secureStore)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'int-test-client', version: '0.0.1' })
   await mcpServer.connect(serverTransport)
   await mcpClient.connect(clientTransport)
 
-  return { mcpClient, configManager }
+  return { mcpClient, configManager, store: secureStore }
 }
 
 function makeConfig(configPath: string) {
@@ -55,9 +57,24 @@ function makeConfig(configPath: string) {
   )
 }
 
-function parseResult(result: Awaited<ReturnType<Client['callTool']>>) {
-  const text = (result.content as Array<{ type: string; text: string }>)[0].text
-  return JSON.parse(text)
+type ToolResult = Awaited<ReturnType<Client['callTool']>>
+type ContentBlock = { type: string; text: string; annotations?: { audience: string[] } }
+
+function getContent(result: ToolResult): ContentBlock[] {
+  return result.content as ContentBlock[]
+}
+
+/** Parses content[0].text as JSON (always the primary/assistant data). */
+function parseResult(result: ToolResult) {
+  return JSON.parse(getContent(result)[0].text)
+}
+
+/**
+ * Finds a student's token by their Canvas ID from the secure store.
+ * The store must have been populated by a prior tool call.
+ */
+function findTokenByCid(store: SecureStore, canvasId: number): string | undefined {
+  return store.listTokens().find(t => store.resolve(t)?.canvasId === canvasId)
 }
 
 // ─── list_modules ──────────────────────────────────────────────────────────────
@@ -154,16 +171,38 @@ describe('Integration: list_assignment_groups', () => {
 // ─── get_class_grade_summary ───────────────────────────────────────────────────
 
 describe('Integration: get_class_grade_summary', () => {
-  it('returns enrolled students', async () => {
+  it('returns enrolled students with blinded tokens', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
     const { mcpClient } = await makeIntegrationClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const content = getContent(result)
+    const data = parseResult(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
     expect(data.students.length).toBeGreaterThan(0)
+    for (const s of data.students) {
+      expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
+    }
     expect(data.as_of).toBeTruthy()
-    console.log(`  ${data.student_count} students`)
+    console.log(`  ${data.student_count} students (blinded)`)
+  })
+
+  it('no real student names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient, store } = await makeIntegrationClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    // Verify all names in the lookup table do NOT appear in assistant content
+    const userText = getContent(result)[1].text
+    const names = userText.split('\n').slice(1)
+      .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
+      .filter(Boolean) as string[]
+    for (const name of names) {
+      expect(assistantText).not.toContain(name)
+    }
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('returns exactly 5 students matching seed', async () => {
@@ -179,29 +218,36 @@ describe('Integration: get_class_grade_summary', () => {
   it.skipIf(!hasSeedIds)('Student 4 has missing_count=3 (A1, A2, exit card per seed)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
     )
-    // studentIds[3] is Student 4 (0-indexed)
-    const s4 = data.students.find((s: { id: number }) => s.id === studentIds[3])
+    const s4token = findTokenByCid(store, studentIds[3])
+    expect(s4token, 'Student 4 token not found').toBeDefined()
+    const s4 = data.students.find((s: { student: string }) => s.student === s4token)
     expect(s4, 'Student 4 not found in grade summary').toBeDefined()
     // A3 is due in the future so it is not yet missing; A1, A2, exit card are past due
     expect(s4.missing_count).toBe(3)
     console.log(`  Student 4 missing_count: ${s4.missing_count}`)
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('Student 2 has missing_count=2 (A2, exit card per seed)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
     )
-    const s2 = data.students.find((s: { id: number }) => s.id === studentIds[1])
+    const s2token = findTokenByCid(store, studentIds[1])
+    expect(s2token, 'Student 2 token not found').toBeDefined()
+    const s2 = data.students.find((s: { student: string }) => s.student === s2token)
     expect(s2, 'Student 2 not found').toBeDefined()
     // A3 is on-time+graded (future due date), so only A2 and exit card are missing
     expect(s2.missing_count).toBe(2)
+    store.destroy()
   })
 
   it('echoes sort_by="name" in response when not specified', async () => {
@@ -229,7 +275,8 @@ describe('Integration: get_class_grade_summary', () => {
   it.skipIf(!hasSeedIds)('sort_by=engagement: Student 4 appears first (most missing)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({
         name: 'get_class_grade_summary',
@@ -237,11 +284,13 @@ describe('Integration: get_class_grade_summary', () => {
       })
     )
     expect(data.sort_by).toBe('engagement')
+    const s4token = findTokenByCid(store, studentIds[3])
     // Student 4 has 3 missing (A1, A2, exit) — highest missing_count, should sort first
-    expect(data.students[0].id).toBe(studentIds[3])
+    expect(data.students[0].student).toBe(s4token)
     console.log(
-      `  Engagement order: ${data.students.slice(0, 3).map((s: { name: string; missing_count: number; late_count: number }) => `${s.name}(m:${s.missing_count},l:${s.late_count})`).join(', ')}`
+      `  Engagement order: ${data.students.slice(0, 3).map((s: { student: string; missing_count: number; late_count: number }) => `${s.student}(m:${s.missing_count},l:${s.late_count})`).join(', ')}`
     )
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('sort_by=grade: null-score student appears first', async () => {
@@ -260,7 +309,7 @@ describe('Integration: get_class_grade_summary', () => {
     // Student 4 has all missing → null current_score → sorts first
     expect(first.current_score === null || first.current_score <= first.current_score).toBe(true)
     console.log(
-      `  Grade order: ${data.students.slice(0, 3).map((s: { name: string; current_score: number | null }) => `${s.name}(${s.current_score})`).join(', ')}`
+      `  Grade order: ${data.students.slice(0, 3).map((s: { student: string; current_score: number | null }) => `${s.student}(${s.current_score})`).join(', ')}`
     )
   })
 
@@ -279,7 +328,7 @@ describe('Integration: get_class_grade_summary', () => {
       expect(typeof student.zeros_count).toBe('number')
     }
     console.log(
-      `  Zeros order: ${data.students.slice(0, 3).map((s: { name: string; zeros_count: number }) => `${s.name}(zeros:${s.zeros_count})`).join(', ')}`
+      `  Zeros order: ${data.students.slice(0, 3).map((s: { student: string; zeros_count: number }) => `${s.student}(zeros:${s.zeros_count})`).join(', ')}`
     )
   })
 })
@@ -287,50 +336,64 @@ describe('Integration: get_class_grade_summary', () => {
 // ─── get_assignment_breakdown ──────────────────────────────────────────────────
 
 describe('Integration: get_assignment_breakdown', () => {
-  it.skipIf(!hasSeedIds)('returns correct metadata for Assignment 1', async () => {
+  it.skipIf(!hasSeedIds)('returns correct metadata for Assignment 1 (blinded)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
     const { mcpClient } = await makeIntegrationClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_assignment_breakdown',
-        arguments: { assignment_id: assignment1Id },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_assignment_breakdown',
+      arguments: { assignment_id: assignment1Id },
+    })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    const data = parseResult(result)
     expect(data.assignment.id).toBe(assignment1Id)
     expect(data.assignment.points_possible).toBe(10)
+    for (const s of data.submissions) {
+      expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
+      expect(s).not.toHaveProperty('student_id')
+      expect(s).not.toHaveProperty('student_name')
+    }
     console.log(`  A1: ${data.summary.submitted} submitted, ${data.summary.missing} missing, mean=${data.summary.mean_score}`)
   })
 
   it.skipIf(!hasSeedIds)('Student 4 submission on A1 has missing=true', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({
         name: 'get_assignment_breakdown',
         arguments: { assignment_id: assignment1Id },
       })
     )
-    const s4sub = data.submissions.find((s: { student_id: number }) => s.student_id === studentIds[3])
+    const s4token = findTokenByCid(store, studentIds[3])
+    expect(s4token, 'Student 4 not tokenized').toBeDefined()
+    const s4sub = data.submissions.find((s: { student: string }) => s.student === s4token)
     expect(s4sub, 'Student 4 submission not found').toBeDefined()
     expect(s4sub.missing).toBe(true)
     expect(s4sub.score).toBeNull()
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('Student 1 submission on A1 has score=10', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({
         name: 'get_assignment_breakdown',
         arguments: { assignment_id: assignment1Id },
       })
     )
-    const s1sub = data.submissions.find((s: { student_id: number }) => s.student_id === studentIds[0])
+    const s1token = findTokenByCid(store, studentIds[0])
+    expect(s1token, 'Student 1 not tokenized').toBeDefined()
+    const s1sub = data.submissions.find((s: { student: string }) => s.student === s1token)
     expect(s1sub, 'Student 1 submission not found').toBeDefined()
     expect(s1sub.score).toBe(10)
+    store.destroy()
   })
 })
 
@@ -340,45 +403,89 @@ describe('Integration: get_student_report', () => {
   it.skipIf(!hasSeedIds)('Student 4: 3 assignments missing (A1, A2, exit card; A3 not yet due)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
+
+    // Populate tokens by calling get_class_grade_summary first
+    await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const s4token = findTokenByCid(store, studentIds[3])
+    expect(s4token, 'Student 4 token not found').toBeDefined()
+
     const data = parseResult(
       await mcpClient.callTool({
         name: 'get_student_report',
-        arguments: { student_id: studentIds[3] },
+        arguments: { student_token: s4token! },
       })
     )
     // A3 is due in the future so it is not yet missing; A1, A2, exit card are past due
     expect(data.summary.total_missing).toBe(3)
     expect(data.summary.total_graded).toBe(0)
+    expect(data.student_token).toBe(s4token)
     console.log(`  Student 4: missing=${data.summary.total_missing}, graded=${data.summary.total_graded}`)
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('Student 1: 3 graded (A1=10, A2=8, exit card), 1 ungraded (A3)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
+
+    // Populate tokens by calling get_class_grade_summary first
+    await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const s1token = findTokenByCid(store, studentIds[0])
+    expect(s1token, 'Student 1 token not found').toBeDefined()
+
     const data = parseResult(
       await mcpClient.callTool({
         name: 'get_student_report',
-        arguments: { student_id: studentIds[0] },
+        arguments: { student_token: s1token! },
       })
     )
     // graded_survey auto-grades on submission, so exit card counts as graded
     expect(data.summary.total_graded).toBe(3)
     expect(data.summary.total_missing).toBe(0)
     expect(data.summary.total_ungraded).toBe(1)
+    store.destroy()
   })
 
-  it('returns error message for unenrolled student ID', async () => {
+  it('no real student names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
+
+    // Populate tokens
+    const summaryResult = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const tokens = store.listTokens()
+    if (tokens.length === 0) return // no students, skip
+
+    const token = tokens[0]
+    const result = await mcpClient.callTool({
+      name: 'get_student_report',
+      arguments: { student_token: token },
+    })
+    const assistantText = getContent(result)[0].text
+    const resolved = store.resolve(token)!
+    expect(assistantText).not.toContain(resolved.name)
+    expect(assistantText).not.toContain(String(resolved.canvasId))
+
+    // Verify the lookup text in summaryResult mentions the name
+    const summaryUserText = getContent(summaryResult)[1].text
+    expect(summaryUserText).toContain(resolved.name)
+    store.destroy()
+  })
+
+  it('returns error message for unknown student token', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
     const { mcpClient } = await makeIntegrationClient(configPath)
     const result = await mcpClient.callTool({
       name: 'get_student_report',
-      arguments: { student_id: 999999999 },
+      arguments: { student_token: '[STUDENT_999]' },
     })
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text
-    expect(text).toContain('not enrolled')
+    const text = getContent(result)[0].text
+    expect(text).toContain('Unknown student token')
   })
 })
 
@@ -388,43 +495,52 @@ describe('Integration: get_missing_assignments', () => {
   it.skipIf(!hasSeedIds)('Student 2 and Student 4 both appear in missing list', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
     )
     // At minimum Student 2 (A2, exit card) and Student 4 (A1, A2, exit card) are missing
-    // (A3 is due in the future so it is not yet missing for any student)
     expect(data.students.length).toBeGreaterThanOrEqual(2)
-    const s4 = data.students.find((s: { id: number }) => s.id === studentIds[3])
-    const s2 = data.students.find((s: { id: number }) => s.id === studentIds[1])
+    const s4token = findTokenByCid(store, studentIds[3])
+    const s2token = findTokenByCid(store, studentIds[1])
+    const s4 = data.students.find((s: { student: string }) => s.student === s4token)
+    const s2 = data.students.find((s: { student: string }) => s.student === s2token)
     expect(s4, 'Student 4 not found in missing list').toBeDefined()
     expect(s2, 'Student 2 not found in missing list').toBeDefined()
     console.log(
-      `  Missing: ${data.students.map((s: { name: string; missing_count: number }) => `${s.name}(${s.missing_count})`).join(', ')}`
+      `  Missing: ${data.students.map((s: { student: string; missing_count: number }) => `${s.student}(${s.missing_count})`).join(', ')}`
     )
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('Student 4 has 3 missing assignments (A1, A2, exit card; A3 not yet due)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
     )
-    const s4 = data.students.find((s: { id: number }) => s.id === studentIds[3])
+    const s4token = findTokenByCid(store, studentIds[3])
+    const s4 = data.students.find((s: { student: string }) => s.student === s4token)
     expect(s4, 'Student 4 not found in missing list').toBeDefined()
     // A3 is due in the future so it is not yet missing; A1, A2, exit card are past due
     expect(s4.missing_count).toBe(3)
+    store.destroy()
   })
 
-  it.skipIf(!hasSeedIds)('Student 4 appears first (most missing)', async () => {
+  it.skipIf(!hasSeedIds)('students are sorted by missing_count descending', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
     const { mcpClient } = await makeIntegrationClient(configPath)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
     )
-    expect(data.students[0].id).toBe(studentIds[3])
+    // Verify descending sort — each student's missing_count is >= the next
+    for (let i = 0; i < data.students.length - 1; i++) {
+      expect(data.students[i].missing_count).toBeGreaterThanOrEqual(data.students[i + 1].missing_count)
+    }
   })
 
   it.skipIf(!hasSeedIds)('since_date far in future returns empty', async () => {
@@ -439,6 +555,23 @@ describe('Integration: get_missing_assignments', () => {
     )
     expect(data.students).toEqual([])
   })
+
+  it('no real student names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
+    const result = await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    const userText = getContent(result)[1].text
+    const names = userText.split('\n').slice(1)
+      .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
+      .filter(Boolean) as string[]
+    for (const name of names) {
+      expect(assistantText).not.toContain(name)
+    }
+    store.destroy()
+  })
 })
 
 // ─── get_late_assignments ──────────────────────────────────────────────────────
@@ -447,28 +580,35 @@ describe('Integration: get_late_assignments', () => {
   it.skipIf(!hasSeedIds)('Student 4 not in late list (never submitted)', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
     )
-    const s4 = data.students.find((s: { id: number }) => s.id === studentIds[3])
+    const s4token = findTokenByCid(store, studentIds[3])
+    const s4 = data.students.find((s: { student: string }) => s.student === s4token)
     expect(s4).toBeUndefined()
     console.log(
-      `  Late students: ${data.students.map((s: { name: string; late_count: number }) => `${s.name}(${s.late_count})`).join(', ')}`
+      `  Late students: ${data.students.map((s: { student: string; late_count: number }) => `${s.student}(${s.late_count})`).join(', ')}`
     )
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('Student 1 appears in late list with submitted assignments', async () => {
     const configPath = makeTmpConfigPath()
     makeConfig(configPath)
-    const { mcpClient } = await makeIntegrationClient(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
     )
-    const s1 = data.students.find((s: { id: number }) => s.id === studentIds[0])
+    const s1token = findTokenByCid(store, studentIds[0])
+    expect(s1token, 'Student 1 not tokenized').toBeDefined()
+    const s1 = data.students.find((s: { student: string }) => s.student === s1token)
     expect(s1, 'Student 1 not in late list').toBeDefined()
     // Student 1 submitted A1 (graded), A2 (graded), A3 (ungraded) — all with past due date
     expect(s1.late_count).toBeGreaterThanOrEqual(1)
+    store.destroy()
   })
 
   it.skipIf(!hasSeedIds)('late assignments include graded flag', async () => {
@@ -483,5 +623,22 @@ describe('Integration: get_late_assignments', () => {
     for (const a of firstStudent.late_assignments) {
       expect(typeof a.graded).toBe('boolean')
     }
+  })
+
+  it('no real student names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeIntegrationClient(configPath, store)
+    const result = await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    const userText = getContent(result)[1].text
+    const names = userText.split('\n').slice(1)
+      .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
+      .filter(Boolean) as string[]
+    for (const name of names) {
+      expect(assistantText).not.toContain(name)
+    }
+    store.destroy()
   })
 })

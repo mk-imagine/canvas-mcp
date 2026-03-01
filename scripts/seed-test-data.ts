@@ -202,7 +202,7 @@ async function acceptEnrollments(studentIds: number[]): Promise<void> {
     )
 
     if (enrollments.length === 0) {
-      console.warn(`    Student ${i + 1}: ⚠️  not found in course enrollments`)
+      console.warn(`    Student ${i + 1}: not found in course enrollments`)
       continue
     }
 
@@ -215,7 +215,7 @@ async function acceptEnrollments(studentIds: number[]): Promise<void> {
       console.log(`    Student ${i + 1}: enrollment active ✓`)
     } else {
       console.warn(
-        `    Student ${i + 1}: ⚠️  enrollment state is "${enrollment_state}" (expected "active")\n` +
+        `    Student ${i + 1}: enrollment state is "${enrollment_state}" (expected "active")\n` +
           `           Submissions will likely fail. Log into this student account at canvas.instructure.com\n` +
           `           and manually accept the course invitation, then re-run: npm run seed`
       )
@@ -385,7 +385,7 @@ async function verifyStudentAccess(content: SeedContent): Promise<void> {
     }
 
     const lockStr = assign.locked_for_user
-      ? `⚠️  LOCKED — ${assign.lock_explanation ?? 'no explanation'}`
+      ? `LOCKED — ${assign.lock_explanation ?? 'no explanation'}`
       : 'not locked'
 
     console.log(
@@ -502,7 +502,7 @@ function writeSeedIds(content: SeedContent, studentIds: number[]): void {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log('🌱 Seeding Canvas test environment...\n')
+  console.log('Seeding Canvas test environment...\n')
 
   console.log('Step 1: Get student Canvas user IDs')
   const studentIds = await getStudentIds()
@@ -531,7 +531,7 @@ async function main(): Promise<void> {
   console.log('\nStep 7: Write seed IDs to .env.test')
   writeSeedIds(content, studentIds)
 
-  console.log('\n✅ Seed complete.\n')
+  console.log('\nSeed complete.\n')
 }
 
 main().catch((err) => {

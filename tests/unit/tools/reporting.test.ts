@@ -11,6 +11,7 @@ import { server as mswServer } from '../../setup/msw-server.js'
 import { CanvasClient } from '../../../src/canvas/client.js'
 import { ConfigManager } from '../../../src/config/manager.js'
 import { registerReportingTools } from '../../../src/tools/reporting.js'
+import { SecureStore } from '../../../src/security/secure-store.js'
 
 const CANVAS_URL = 'https://canvas.example.com'
 const COURSE_ID = 1
@@ -98,23 +99,52 @@ function writeConfig(path: string, overrides: Record<string, unknown> = {}) {
   writeFileSync(path, JSON.stringify(base), 'utf-8')
 }
 
-async function makeTestClient(configPath: string) {
+async function makeTestClient(configPath: string, store?: SecureStore) {
+  const secureStore = store ?? new SecureStore()
   const configManager = new ConfigManager(configPath)
   const canvasClient = new CanvasClient({ instanceUrl: CANVAS_URL, apiToken: 'tok' })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerReportingTools(mcpServer, canvasClient, configManager)
+  registerReportingTools(mcpServer, canvasClient, configManager, secureStore)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'test-client', version: '0.0.1' })
   await mcpServer.connect(serverTransport)
   await mcpClient.connect(clientTransport)
 
-  return { mcpClient, configManager }
+  return { mcpClient, configManager, store: secureStore }
 }
 
-function parseResult(result: Awaited<ReturnType<Client['callTool']>>) {
-  const text = (result.content as Array<{ type: string; text: string }>)[0].text
-  return JSON.parse(text)
+type ToolResult = Awaited<ReturnType<Client['callTool']>>
+type ContentBlock = { type: string; text: string; annotations?: { audience: string[] } }
+
+function getContent(result: ToolResult): ContentBlock[] {
+  return result.content as ContentBlock[]
+}
+
+/** Parses content[0].text as JSON (assistant-audience blinded data). */
+function parseBlindedResult(result: ToolResult) {
+  return JSON.parse(getContent(result)[0].text)
+}
+
+/** Returns content[1].text (user-audience lookup table). */
+function getUserText(result: ToolResult): string {
+  return getContent(result)[1].text
+}
+
+/** Legacy helper for non-blinded tools (list_modules, etc.). */
+function parseResult(result: ToolResult) {
+  return JSON.parse(getContent(result)[0].text)
+}
+
+/**
+ * Finds the session token for a student by display name from the lookup table.
+ * Lookup table format: "Student lookup (current session):\n[STUDENT_001] → Jane Smith\n..."
+ */
+function getStudentToken(userText: string, name: string): string | undefined {
+  for (const line of userText.split('\n').slice(1)) {
+    const match = line.match(/^(\[STUDENT_\d{3}\]) → (.+)$/)
+    if (match && match[2] === name) return match[1]
+  }
 }
 
 // ─── list_modules ──────────────────────────────────────────────────────────────
@@ -170,7 +200,7 @@ describe('list_modules', () => {
     })
     const { mcpClient } = await makeTestClient(configPath)
     const result = await mcpClient.callTool({ name: 'list_modules', arguments: {} })
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    const text = getContent(result)[0].text
     expect(text).toContain('No active course')
   })
 })
@@ -245,8 +275,6 @@ describe('get_module_summary', () => {
   it('does not fetch assignments when include_html is false', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
-    // Only register module/items handlers — no assignment handler
-    // msw is set to error on unhandled requests, so this confirms no extra call is made
     mswServer.use(
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules/10`, () =>
         HttpResponse.json(MOCK_MODULE)
@@ -256,7 +284,6 @@ describe('get_module_summary', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    // Should not throw even though no assignment handler is registered
     const data = parseResult(
       await mcpClient.callTool({ name: 'get_module_summary', arguments: { module_id: 10 } })
     )
@@ -299,16 +326,61 @@ describe('get_class_grade_summary', () => {
     )
   })
 
+  it('response content[0] has audience=["assistant"] and content[1] has audience=["user"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+  })
+
+  it('student field in blinded JSON matches token pattern', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseBlindedResult(
+      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    )
+    for (const s of data.students) {
+      expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
+    }
+  })
+
+  it('no real names or Canvas IDs appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    expect(assistantText).not.toContain('Jane Smith')
+    expect(assistantText).not.toContain('Bob Adams')
+    expect(assistantText).not.toContain('"1001"')
+    expect(assistantText).not.toContain('"1002"')
+  })
+
+  it('real names appear in user lookup table', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const userText = getUserText(result)
+    expect(userText).toContain('Jane Smith')
+    expect(userText).toContain('Bob Adams')
+  })
+
   it('aggregates missing, late, and ungraded counts per student', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
-    // Adams (Bob) sorted first alphabetically
-    const bob = data.students.find((s: { name: string }) => s.name === 'Bob Adams')
-    const jane = data.students.find((s: { name: string }) => s.name === 'Jane Smith')
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    const bob = data.students.find((s: { student: string }) => s.student === bobToken)
+    const jane = data.students.find((s: { student: string }) => s.student === janeToken)
     expect(bob.missing_count).toBe(1)
     expect(jane.late_count).toBe(1)
     expect(jane.ungraded_count).toBe(1)
@@ -318,21 +390,24 @@ describe('get_class_grade_summary', () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
-    expect(data.students[0].name).toBe('Bob Adams')
-    expect(data.students[1].name).toBe('Jane Smith')
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    expect(data.students[0].student).toBe(bobToken)
+    expect(data.students[1].student).toBe(janeToken)
   })
 
   it('passes through current_score and final_score from enrollment', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
-    const jane = data.students.find((s: { name: string }) => s.name === 'Jane Smith')
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    const jane = data.students.find((s: { student: string }) => s.student === janeToken)
     expect(jane.current_score).toBe(87.4)
     expect(jane.final_score).toBe(82.1)
   })
@@ -341,10 +416,11 @@ describe('get_class_grade_summary', () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
-    const bob = data.students.find((s: { name: string }) => s.name === 'Bob Adams')
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const bob = data.students.find((s: { student: string }) => s.student === bobToken)
     expect(bob.late_count).toBe(0)
     expect(bob.ungraded_count).toBe(0)
   })
@@ -353,7 +429,7 @@ describe('get_class_grade_summary', () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
     )
     for (const student of data.students) {
@@ -367,20 +443,20 @@ describe('get_class_grade_summary', () => {
     mswServer.use(
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
         HttpResponse.json([
-          // Jane: one zero score, one null score
           { ...MOCK_SUBMISSIONS[0], score: 0 },
           MOCK_SUBMISSIONS[1],
-          // Bob: missing (null score), not a zero
           MOCK_SUBMISSIONS[2],
         ])
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
-    )
-    const jane = data.students.find((s: { name: string }) => s.name === 'Jane Smith')
-    const bob = data.students.find((s: { name: string }) => s.name === 'Bob Adams')
+    const result = await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const jane = data.students.find((s: { student: string }) => s.student === janeToken)
+    const bob = data.students.find((s: { student: string }) => s.student === bobToken)
     expect(jane.zeros_count).toBe(1)
     expect(bob.zeros_count).toBe(0)
   })
@@ -389,7 +465,7 @@ describe('get_class_grade_summary', () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_class_grade_summary', arguments: {} })
     )
     expect(data.sort_by).toBe('name')
@@ -399,14 +475,15 @@ describe('get_class_grade_summary', () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'engagement' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'engagement' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Bob has 1 missing, Jane has 0 missing → Bob first
-    expect(data.students[0].name).toBe('Bob Adams')
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    expect(data.students[0].student).toBe(bobToken)
     expect(data.sort_by).toBe('engagement')
   })
 
@@ -416,7 +493,6 @@ describe('get_class_grade_summary', () => {
     mswServer.use(
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
         HttpResponse.json([
-          // Both students have 0 missing; Jane has 1 late, Bob has 0 late
           { ...MOCK_SUBMISSIONS[0], missing: false },
           MOCK_SUBMISSIONS[1], // Jane: late=true
           { ...MOCK_SUBMISSIONS[2], missing: false }, // Bob: no late
@@ -424,14 +500,15 @@ describe('get_class_grade_summary', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'engagement' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'engagement' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Jane has 1 late, Bob has 0 → Jane first when missing tied at 0
-    expect(data.students[0].name).toBe('Jane Smith')
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    expect(data.students[0].student).toBe(janeToken)
   })
 
   it('sort_by=engagement: ties on missing+late broken by current_score ASC', async () => {
@@ -448,29 +525,32 @@ describe('get_class_grade_summary', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'engagement' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'engagement' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
     // Bob current_score=60 < Jane current_score=87.4 → Bob first
-    expect(data.students[0].name).toBe('Bob Adams')
-    expect(data.students[1].name).toBe('Jane Smith')
+    expect(data.students[0].student).toBe(bobToken)
+    expect(data.students[1].student).toBe(janeToken)
   })
 
   it('sort_by=grade: lowest current_score appears first', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'grade' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'grade' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Bob current_score=60, Jane current_score=87.4 → Bob first
-    expect(data.students[0].name).toBe('Bob Adams')
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    expect(data.students[0].student).toBe(bobToken)
     expect(data.sort_by).toBe('grade')
   })
 
@@ -489,14 +569,15 @@ describe('get_class_grade_summary', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'grade' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'grade' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Jane has null score → Jane first (nulls sort before any score)
-    expect(data.students[0].name).toBe('Jane Smith')
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    expect(data.students[0].student).toBe(janeToken)
     expect(data.students[0].current_score).toBeNull()
   })
 
@@ -506,23 +587,22 @@ describe('get_class_grade_summary', () => {
     mswServer.use(
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
         HttpResponse.json([
-          // Jane: two zero scores
           { ...MOCK_SUBMISSIONS[0], score: 0 },
           { ...MOCK_SUBMISSIONS[1], score: 0, workflow_state: 'graded', graded_at: 't', late: false },
-          // Bob: one missing (null score), no zeros
           MOCK_SUBMISSIONS[2],
         ])
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'zeros' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'zeros' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Jane has 2 zeros → Jane first
-    expect(data.students[0].name).toBe('Jane Smith')
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    expect(data.students[0].student).toBe(janeToken)
     expect(data.students[0].zeros_count).toBe(2)
     expect(data.sort_by).toBe('zeros')
   })
@@ -533,7 +613,6 @@ describe('get_class_grade_summary', () => {
     mswServer.use(
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
         HttpResponse.json([
-          // Both students have exactly 1 zero — tie broken by name
           { ...MOCK_SUBMISSIONS[0], score: 0 },
           MOCK_SUBMISSIONS[1],
           { ...MOCK_SUBMISSIONS[2], score: 0, workflow_state: 'graded', graded_at: 't', missing: false },
@@ -541,21 +620,67 @@ describe('get_class_grade_summary', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'get_class_grade_summary',
-        arguments: { sort_by: 'zeros' },
-      })
-    )
+    const result = await mcpClient.callTool({
+      name: 'get_class_grade_summary',
+      arguments: { sort_by: 'zeros' },
+    })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
     // Both have zeros_count=1; Adams, Bob sorts before Smith, Jane
-    expect(data.students[0].name).toBe('Bob Adams')
-    expect(data.students[1].name).toBe('Jane Smith')
+    const bobToken = getStudentToken(userText, 'Bob Adams')!
+    const janeToken = getStudentToken(userText, 'Jane Smith')!
+    expect(data.students[0].student).toBe(bobToken)
+    expect(data.students[1].student).toBe(janeToken)
   })
 })
 
 // ─── get_assignment_breakdown ──────────────────────────────────────────────────
 
 describe('get_assignment_breakdown', () => {
+  it('response content[0] has audience=["assistant"] and content[1] has audience=["user"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/501`, () =>
+        HttpResponse.json({ id: 501, name: 'Assignment A', points_possible: 10, due_at: null, html_url: '/a' })
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/501/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: 't', graded_at: 't', late: false, missing: false, workflow_state: 'graded', user: { id: 1001, name: 'Jane Smith', sortable_name: 'Smith, Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_assignment_breakdown', arguments: { assignment_id: 501 } })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+  })
+
+  it('submissions use token instead of student_name/student_id', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/501`, () =>
+        HttpResponse.json({ id: 501, name: 'Assignment A', points_possible: 10, due_at: null, html_url: '/a' })
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/501/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: 't', graded_at: 't', late: false, missing: false, workflow_state: 'graded', user: { id: 1001, name: 'Jane Smith', sortable_name: 'Smith, Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_assignment_breakdown', arguments: { assignment_id: 501 } })
+    const data = parseBlindedResult(result)
+    const assistantText = getContent(result)[0].text
+    expect(data.submissions[0].student).toMatch(/^\[STUDENT_\d{3}\]$/)
+    expect(data.submissions[0]).not.toHaveProperty('student_name')
+    expect(data.submissions[0]).not.toHaveProperty('student_id')
+    expect(assistantText).not.toContain('Jane Smith')
+    expect(assistantText).not.toContain('1001')
+  })
+
   it('computes mean_score from graded submissions only', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -572,7 +697,7 @@ describe('get_assignment_breakdown', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_assignment_breakdown', arguments: { assignment_id: 501 } })
     )
     expect(data.summary.mean_score).toBe(8.0)
@@ -595,7 +720,7 @@ describe('get_assignment_breakdown', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_assignment_breakdown', arguments: { assignment_id: 501 } })
     )
     expect(data.summary.missing).toBe(1)
@@ -617,7 +742,7 @@ describe('get_assignment_breakdown', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_assignment_breakdown', arguments: { assignment_id: 501 } })
     )
     expect(data.summary.mean_score).toBeNull()
@@ -627,6 +752,51 @@ describe('get_assignment_breakdown', () => {
 // ─── get_student_report ────────────────────────────────────────────────────────
 
 describe('get_student_report', () => {
+  it('response content[0] has audience=["assistant"] and content[1] has audience=["user"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: 't', graded_at: 't', late: false, missing: false, workflow_state: 'graded', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-01-01T00:00:00Z' } },
+        ])
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+        HttpResponse.json([MOCK_ENROLLMENTS[0]])
+      )
+    )
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    const result = await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_001]' } })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+  })
+
+  it('output has student_token field, not student.id or student.name', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: 't', graded_at: 't', late: false, missing: false, workflow_state: 'graded', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-01-01T00:00:00Z' } },
+        ])
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+        HttpResponse.json([MOCK_ENROLLMENTS[0]])
+      )
+    )
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    const result = await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_001]' } })
+    const data = parseBlindedResult(result)
+    const assistantText = getContent(result)[0].text
+    expect(data.student_token).toBe('[STUDENT_001]')
+    expect(data).not.toHaveProperty('student')
+    expect(assistantText).not.toContain('Jane Smith')
+    expect(assistantText).not.toContain('1001')
+  })
+
   it('returns summary counts correctly', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -642,9 +812,10 @@ describe('get_student_report', () => {
         HttpResponse.json([MOCK_ENROLLMENTS[0]])
       )
     )
-    const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_student_report', arguments: { student_id: 1001 } })
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    const data = parseBlindedResult(
+      await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_001]' } })
     )
     expect(data.summary.total_missing).toBe(1)
     expect(data.summary.total_late).toBe(1)
@@ -666,15 +837,26 @@ describe('get_student_report', () => {
         HttpResponse.json([MOCK_ENROLLMENTS[0]])
       )
     )
-    const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_student_report', arguments: { student_id: 1001 } })
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    const data = parseBlindedResult(
+      await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_001]' } })
     )
     expect(data.assignments[0].name).toBe('Earlier')
     expect(data.assignments[1].name).toBe('Later')
   })
 
-  it('returns error message when student is not enrolled', async () => {
+  it('returns error for unknown student token', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_999]' } })
+    const text = getContent(result)[0].text
+    expect(text).toContain('Unknown student token')
+    expect(text).toContain('[STUDENT_999]')
+  })
+
+  it('returns error message when student token resolves to unenrolled user', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     mswServer.use(
@@ -685,9 +867,10 @@ describe('get_student_report', () => {
         HttpResponse.json([])
       )
     )
-    const { mcpClient } = await makeTestClient(configPath)
-    const result = await mcpClient.callTool({ name: 'get_student_report', arguments: { student_id: 9999 } })
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(9999, 'Ghost User')
+    const result = await mcpClient.callTool({ name: 'get_student_report', arguments: { student_token: '[STUDENT_001]' } })
+    const text = getContent(result)[0].text
     expect(text).toContain('not enrolled')
   })
 })
@@ -695,6 +878,23 @@ describe('get_student_report', () => {
 // ─── get_missing_assignments ───────────────────────────────────────────────────
 
 describe('get_missing_assignments', () => {
+  it('response content[0] has audience=["assistant"] and content[1] has audience=["user"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: null, submitted_at: null, graded_at: null, late: false, missing: true, workflow_state: 'unsubmitted', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-01-01T00:00:00Z' }, user: { id: 1001, name: 'Jane', sortable_name: 'Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+  })
+
   it('groups missing submissions by student, excludes non-missing', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -708,11 +908,31 @@ describe('get_missing_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
     )
     expect(data.students).toHaveLength(2)
     expect(data.total_missing_submissions).toBe(2)
+    for (const s of data.students) {
+      expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
+    }
+  })
+
+  it('no real names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: null, submitted_at: null, graded_at: null, late: false, missing: true, workflow_state: 'unsubmitted', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-01-01T00:00:00Z' }, user: { id: 1001, name: 'Jane Smith', sortable_name: 'Smith, Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    expect(assistantText).not.toContain('Jane Smith')
+    expect(assistantText).not.toContain('"1001"')
   })
 
   it('filters by since_date', async () => {
@@ -727,7 +947,7 @@ describe('get_missing_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({
         name: 'get_missing_assignments',
         arguments: { since_date: '2026-01-01T00:00:00Z' },
@@ -750,12 +970,13 @@ describe('get_missing_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
-    )
-    expect(data.students[0].name).toBe('Jane')
+    const result = await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane')!
+    expect(data.students[0].student).toBe(janeToken)
     expect(data.students[0].missing_count).toBe(2)
-    expect(data.students[1].name).toBe('Bob')
+    expect(data.students[1].missing_count).toBe(1)
   })
 
   it('returns empty students array when nothing is missing', async () => {
@@ -767,7 +988,7 @@ describe('get_missing_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_missing_assignments', arguments: {} })
     )
     expect(data.students).toEqual([])
@@ -778,6 +999,23 @@ describe('get_missing_assignments', () => {
 // ─── get_late_assignments ──────────────────────────────────────────────────────
 
 describe('get_late_assignments', () => {
+  it('response content[0] has audience=["assistant"] and content[1] has audience=["user"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: '2026-02-15T10:00:00Z', graded_at: 't', late: true, missing: false, workflow_state: 'graded', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-02-01T00:00:00Z' }, user: { id: 1001, name: 'Jane', sortable_name: 'Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+  })
+
   it('returns only late submissions grouped by student', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -791,13 +1029,31 @@ describe('get_late_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
-    )
+    const result = await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane')!
     expect(data.students).toHaveLength(1)
-    expect(data.students[0].name).toBe('Jane')
+    expect(data.students[0].student).toBe(janeToken)
     expect(data.students[0].late_count).toBe(2)
     expect(data.total_late_submissions).toBe(2)
+  })
+
+  it('no real names appear in assistant content', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([
+          { id: 1, assignment_id: 501, user_id: 1001, score: 9, submitted_at: '2026-02-15T10:00:00Z', graded_at: 't', late: true, missing: false, workflow_state: 'graded', assignment: { id: 501, name: 'A', points_possible: 10, due_at: '2026-02-01T00:00:00Z' }, user: { id: 1001, name: 'Jane Smith', sortable_name: 'Smith, Jane' } },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
+    const assistantText = getContent(result)[0].text
+    expect(assistantText).not.toContain('Jane Smith')
+    expect(assistantText).not.toContain('"1001"')
   })
 
   it('sets graded=true for scored submissions, graded=false for unscored', async () => {
@@ -812,7 +1068,7 @@ describe('get_late_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
     )
     const [first, second] = data.students[0].late_assignments
@@ -834,10 +1090,73 @@ describe('get_late_assignments', () => {
       )
     )
     const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
+    const data = parseBlindedResult(
       await mcpClient.callTool({ name: 'get_late_assignments', arguments: {} })
     )
     expect(data.students).toEqual([])
     expect(data.total_late_submissions).toBe(0)
+  })
+})
+
+// ─── resolve_student ───────────────────────────────────────────────────────────
+
+describe('resolve_student', () => {
+  it('returns name and canvas_id with audience=["user"] only', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    const result = await mcpClient.callTool({
+      name: 'resolve_student',
+      arguments: { student_token: '[STUDENT_001]' },
+    })
+    const content = getContent(result)
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations?.audience).toEqual(['user'])
+    const data = JSON.parse(content[0].text)
+    expect(data.name).toBe('Jane Smith')
+    expect(data.canvas_id).toBe(1001)
+    expect(data.student_token).toBe('[STUDENT_001]')
+  })
+
+  it('returns error for unknown token', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'resolve_student',
+      arguments: { student_token: '[STUDENT_999]' },
+    })
+    const text = getContent(result)[0].text
+    expect(text).toContain('Unknown student token')
+  })
+})
+
+// ─── list_blinded_students ────────────────────────────────────────────────────
+
+describe('list_blinded_students', () => {
+  it('returns token list with audience=["assistant"]', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient, store } = await makeTestClient(configPath)
+    store.tokenize(1001, 'Jane Smith')
+    store.tokenize(1002, 'Bob Adams')
+    const result = await mcpClient.callTool({ name: 'list_blinded_students', arguments: {} })
+    const content = getContent(result)
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    const data = JSON.parse(content[0].text)
+    expect(data).toHaveLength(2)
+    expect(data[0].token).toBe('[STUDENT_001]')
+    expect(data[1].token).toBe('[STUDENT_002]')
+  })
+
+  it('returns empty array when no students tokenized', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_blinded_students', arguments: {} })
+    const data = JSON.parse(getContent(result)[0].text)
+    expect(data).toEqual([])
   })
 })

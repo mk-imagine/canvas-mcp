@@ -6,3 +6,6 @@ dist/
 
 # VS Code
 .history/
+
+# LLMs
+.claude/
