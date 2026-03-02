@@ -1,73 +1,170 @@
-# Planning: Dual-Mode Canvas MCP (Teacher & Student)
+# Dual-Mode Scaffolding Plan: Templates vs. Freeform
 
 ## Objective
-To expand the Canvas MCP capabilities to support student-facing workflows while maintaining the high security and FERPA-compliant standards of the teacher-facing implementation.
+Generalize the MCP server by moving program-specific scaffolding logic out of the source code and into a user-definable template system. This allows the server to support any school or curriculum while providing a "Dual-Mode" interface for the AI: **Blueprint Mode** (consistent, template-driven) and **Manual Mode** (freeform, one-off).
 
 ---
 
-## Architectural Approach: Path A (Shared Core)
+## 1. Template Storage
+Templates reside in the user's configuration directory to ensure they survive server updates and contain no secrets.
 
-The "Shared Core" approach involves extracting the heavy lifting (API communication, rate limiting, pagination, and shared types) into a central engine, while exposing distinct toolsets for each persona.
+**Path:** `~/.config/mcp/canvas-teacher-mcp/templates/`
 
-### 1. Core Extraction (`src/core`)
-Move the following to a shared core to avoid logic drift:
-- **`CanvasClient`**: All logic for `fetchWithRetry`, link-header pagination, and auth headers.
-- **Shared Types**: Basic interfaces for `Course`, `Assignment`, `Submission`, etc.
-- **Config Manager**: Logic for reading `config.json` and managing API tokens.
-
-### 2. Persona-Specific Toolsets
-- **Teacher Tools (`src/tools/teacher`)**:
-    - Focus: Content scaffolding, batch reporting, PII Blinding (`SecureStore`).
-    - Requirement: High-privilege API token.
-- **Student Tools (`src/tools/student`)**:
-    - Focus: Assignment details, rubric parsing, submission status, grades.
-    - Requirement: Student-level API token.
-    - Note: No PII blinding needed (students see their own data).
-
-### 3. Distinct Entry Points
-Instead of a runtime switch, use separate entry points to ensure the LLM never sees irrelevant tools:
-- `npm run start:teacher` -> Loads only teacher tools.
-- `npm run start:student` -> Loads only student tools.
-
----
-
-## Mono-repo vs. Separate Repositories
-
-### Option 1: Monorepo (Shared Source)
-**Structure:**
+### Folder Structure
+Each template is a self-contained directory:
 ```text
-/src
-  /core         (Client, Auth, Base Types)
-  /teacher      (PII Blinding, Scaffolding, Reports)
-  /student      (Submission helpers, Grade tracking)
-  index-teacher.ts
-  index-student.ts
+templates/
+└── standard-week/           # Template Name (matches template_name argument)
+    ├── manifest.json        # Blueprint: structure, logic, variable schema
+    ├── overview.hbs         # Handlebars HTML for the overview page
+    └── assignment.hbs       # Handlebars HTML for assignments
 ```
-- **Pros:** Bug fixes in the `CanvasClient` benefit both modes instantly. Consistent developer experience.
-- **Cons:** Accidental cross-contamination of logic. If a teacher tool is accidentally imported into the student entry point, it could be exposed.
 
-### Option 2: Separate Repositories (Shared Package)
-**Structure:**
-- `canvas-client-core`: A private or public NPM package containing the API client.
-- `canvas-teacher-mcp`: Consumes the core; implements teacher tools.
-- `canvas-student-mcp`: Consumes the core; implements student tools.
-- **Pros:** Maximum security isolation. Clear boundaries. Different release cycles (e.g., a teacher-mode bug doesn't require a student-mode update).
-- **Cons:** Overhead of managing multiple repositories and publishing/linking the shared package during development.
+### Bundled Default Templates
+The current hardcoded `lesson`, `solution`, and `clone` logic will be converted into default blueprints (JSON/HBS files) bundled in the server's source under `src/templates/defaults/`. On first run, the server copies these defaults to the user's config directory if they don't already exist. This means:
+- Teachers can edit the defaults to suit their school without touching source code.
+- Server updates ship new defaults but never overwrite user-customized files.
+- The `lesson`, `solution`, and `clone` discriminants in `build_module` are deprecated and removed.
 
 ---
 
-## Security Considerations
+## 2. The Module Blueprint (`manifest.json`)
 
-| Feature | Teacher Mode | Student Mode |
-| :--- | :--- | :--- |
-| **PII Blinding** | **Required** (FERPA compliance) | **Disabled** (Self-view only) |
-| **Token Privilege** | High (Admin/Teacher) | Low (Student) |
-| **Mutation Risk** | High (Can delete/reset) | Low (Can only submit) |
-| **Secure Heap** | Recommended | Optional |
+The manifest defines the sequence of items in a module, how to render them, and what variables the LLM must supply.
+
+### Required Fields
+| Field | Type | Description |
+|---|---|---|
+| `version` | `1` | Schema version. Required. Manifests with unsupported versions are rejected immediately. |
+| `name` | `string` | Human-readable template name. |
+| `description` | `string` | Shown by `list_items(type='templates')`. |
+| `structure` | `array` | Ordered list of renderable items. |
+
+### Optional Fields
+| Field | Type | Description |
+|---|---|---|
+| `variables_schema` | `object` | Declares expected variables so the LLM can introspect the contract. See below. |
+
+### `for_each` Semantics
+A structure item may include `"for_each": "<key>"` where `<key>` must be a key in the `variables` object whose value is an array. The template engine renders one instance of that item per element. Each element is accessible as `{{item.*}}` within the block. If the array is empty, the block is silently skipped. Nesting `for_each` within another `for_each` is not supported in v1.
+
+### Full Example
+
+```json
+{
+  "version": 1,
+  "name": "Standard Learning Week",
+  "description": "A module with an overview, assignments, and a wrap-up quiz.",
+  "variables_schema": {
+    "week": { "type": "number", "required": true },
+    "topic": { "type": "string", "required": true },
+    "assignments": { "type": "array", "required": false }
+  },
+  "structure": [
+    {
+      "type": "SubHeader",
+      "title": "OVERVIEW"
+    },
+    {
+      "type": "Page",
+      "title": "Week {{week}} | Overview",
+      "body_file": "overview.hbs"
+    },
+    {
+      "type": "SubHeader",
+      "title": "ASSIGNMENTS"
+    },
+    {
+      "for_each": "assignments",
+      "type": "Assignment",
+      "title": "Week {{week}} | {{item.title}}",
+      "body_file": "assignment.hbs",
+      "points": "{{item.points}}"
+    },
+    {
+      "type": "SubHeader",
+      "title": "WRAP-UP"
+    },
+    {
+      "type": "Quiz",
+      "title": "Week {{week}} | Exit Card",
+      "quiz_type": "graded_survey",
+      "time_limit": 5,
+      "questions": [
+        { "question_text": "What was the most important thing you learned this week?" },
+        { "question_text": "What questions do you still have?" }
+      ]
+    }
+  ]
+}
+```
 
 ---
 
-## Next Steps for Decision
-1. **Determine the "Student" Scope**: Is the student MCP meant to be as feature-rich as the teacher one (e.g., parsing assignment files, managing study schedules)?
-2. **Evaluate Maintenance Bandwidth**: Can you maintain two separate CI/CD pipelines and repos, or is a single-repo "Shared Core" easier to manage?
-3. **Draft Student-Specific Tools**: List 5-10 key tools a student needs that a teacher does not.
+## 3. Dual-Mode Tool Implementation
+
+### A. `create_item` (Individual Items)
+
+`template_name` and `body` are **mutually exclusive**:
+- If `template_name` is provided: load `templates/<template_name>/<item_type>.hbs` and render with `template_data`. File names are lowercase, matching the `type` field (e.g., `page.hbs`, `assignment.hbs`, `quiz.hbs`).
+- If `body` is provided: use the raw HTML string directly.
+- If neither is provided: the item is created with an empty body (valid for many Canvas types).
+
+### B. `build_module` (Entire Modules)
+
+Schema uses a discriminated union on `mode`:
+
+**`mode: 'blueprint'`**
+- `template_name: string` — name of the template directory in the config folder.
+- `variables: object` — key/value pairs matching the template's `variables_schema`.
+- `dry_run?: boolean` (default `false`) — if `true`, renders all items and returns the resolved list (titles, bodies, types) without making any Canvas API calls.
+- `course_id?: number`
+
+**`mode: 'manual'`**
+- `module_name: string` — name for the new Canvas module.
+- `items: array` — ordered list of items to create (each with `type`, `title`, `body?`, `points?`, etc.).
+- `course_id?: number`
+
+---
+
+## 4. Error Model
+
+### Pre-flight Errors (before any Canvas API calls)
+The following conditions result in an immediate `toolError` with no Canvas state changes:
+- `manifest.json` is missing or contains invalid JSON.
+- `manifest.json` has an unsupported `version` value.
+- A `body_file` referenced in the manifest does not exist in the template directory.
+- A `for_each` key does not exist in the supplied `variables`.
+
+### Execution Errors (mid-module)
+If a Canvas API call fails after some items have already been created, `build_module` returns a **partial result** (the same pattern as `executeRenderables`), listing:
+- `created`: items successfully created, with their Canvas IDs.
+- `failed`: the item that failed, with the error message.
+
+The LLM can retry or report the partial result to the instructor.
+
+---
+
+## 5. Template Discovery
+
+`list_items(type='templates')` returns all templates available in the user's config directory. Each entry includes `name`, `description`, and `variables_schema` (if present) parsed from `manifest.json`. This gives the LLM full introspection before calling `build_module`.
+
+---
+
+## 6. Migration Strategy
+
+1. **Template Service:** Create `src/config/templates.ts` — handles directory scanning, manifest parsing, version validation, and Handlebars rendering.
+2. **Bundle Defaults:** Convert current `lesson`, `solution`, and `clone` logic from `src/templates/index.ts` into JSON/HBS files under `src/templates/defaults/`. Seed into user config dir on first run.
+3. **Update Tool Schemas:**
+   - Update `build_module` to `z.discriminatedUnion('mode', ['blueprint', 'manual'])`. Remove `lesson`/`solution`/`clone` variants.
+   - Update `create_item` with optional, mutually exclusive `template_name`/`template_data` fields.
+   - Add `type: 'templates'` to `list_items`.
+4. **Cleanup:** Remove hardcoded scaffolding logic from `src/templates/index.ts` once defaults are migrated.
+
+---
+
+## 7. Benefits
+- **Zero-Code Customization:** Teachers edit HTML files in their config folder — no source changes needed.
+- **Reduced Token Usage:** The AI sends only data (titles, links, variable values); the server generates all HTML.
+- **School Agnostic:** The server is a pure Canvas engine; "personality" lives entirely in template files.
+- **Safe by Default:** `dry_run=true` lets instructors preview a full module creation before any API calls.

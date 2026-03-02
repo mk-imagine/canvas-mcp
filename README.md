@@ -80,10 +80,10 @@ Create the directory and file the server reads on startup. In Terminal:
 
 **macOS/Linux:**
 ```bash
-mkdir -p ~/.canvas-teacher-mcp
+mkdir -p ~/.config/mcp/canvas-teacher-mcp
 ```
 
-Then open a text editor and create the file `~/.canvas-teacher-mcp/config.json` with this content (substitute your real values):
+Then open a text editor and create the file `~/.config/mcp/canvas-teacher-mcp/config.json` with this content (substitute your real values):
 
 ```json
 {
@@ -150,11 +150,21 @@ Claude will call `list_courses` and show your courses. Then set the active cours
 
 ## Configuration reference
 
-The server reads `~/.canvas-teacher-mcp/config.json` on startup. See the full schema in [PLANNING.md](PLANNING.md#3-configuration-schema). The key fields are listed in step 6 above.
+The server reads `~/.config/mcp/canvas-teacher-mcp/config.json` on startup by default. The setup instructions in step 6 above use this default path.
+
+### Using a custom config location
+
+If you need to store the config file somewhere other than the default — for example, to maintain separate configs for different schools or environments — you can point the server at any path using the `--config` flag in the server `args`:
+
+```json
+"args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js", "--config", "/your/custom/path/config.json"]
+```
+
+If you use a custom location, replace `~/.config/mcp/canvas-teacher-mcp` with your chosen directory path everywhere it appears in the setup instructions — including the `mkdir` command in step 6 and the config file path you create there.
 
 ## Other AI assistants
 
-The server works with any MCP-compatible AI client, not just Claude Desktop. The `~/.canvas-teacher-mcp/config.json` file is shared across all clients — you only configure it once.
+The server works with any MCP-compatible AI client, not just Claude Desktop. The `~/.config/mcp/canvas-teacher-mcp/config.json` file is shared across all clients — you only configure it once.
 
 ### Claude Code (the `claude` CLI)
 
@@ -386,7 +396,7 @@ src/
 │   └── search.ts         # Canvas Smart Search API
 ├── config/
 │   ├── schema.ts         # Config types and DEFAULT_CONFIG
-│   └── manager.ts        # Read/write ~/.canvas-teacher-mcp/config.json
+│   └── manager.ts        # Read/write ~/.config/mcp/canvas-teacher-mcp/config.json
 ├── security/
 │   └── secure-store.ts   # AES-256-GCM in-memory PII store (session tokens, mlock)
 ├── templates/

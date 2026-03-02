@@ -1615,7 +1615,7 @@ This stage adds student accounts and the seed script so that reporting tools hav
 
 - Project scaffolding: TypeScript, `@modelcontextprotocol/sdk`, build pipeline.
 - Canvas API client: auth, pagination, rate limiting, error normalization.
-- Config manager: read/write `~/.canvas-teacher-mcp/config.json`, schema validation.
+- Config manager: read/write `~/.config/mcp/canvas-teacher-mcp/config.json`, schema validation.
 - Tools: `list_courses`, `set_active_course`, `get_active_course`.
 
 **Tests written in this phase:**

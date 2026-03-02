@@ -19,7 +19,9 @@ async function main() {
   process.on('SIGHUP', cleanup)
   process.on('uncaughtException', () => { cleanup() })
 
-  const configManager = new ConfigManager()
+  const configFlagIndex = process.argv.indexOf('--config')
+  const configPath = configFlagIndex !== -1 ? process.argv[configFlagIndex + 1] : undefined
+  const configManager = new ConfigManager(configPath)
   const config = configManager.read()
   const client = new CanvasClient(config.canvas)
   const server = new McpServer({ name: 'canvas-teacher-mcp', version: '0.1.0' })
