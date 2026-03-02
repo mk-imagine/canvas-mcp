@@ -29,6 +29,9 @@ export interface CanvasTeacherConfig {
     minScore: number
     exitCardPoints: number
   }
+  smartSearch: {
+    distanceThreshold: number
+  }
   assignmentDescriptionTemplate: {
     default: string
     solution: string
@@ -61,6 +64,9 @@ export const DEFAULT_CONFIG: CanvasTeacherConfig = {
     completionRequirement: 'min_score',
     minScore: 1,
     exitCardPoints: 0.5,
+  },
+  smartSearch: {
+    distanceThreshold: 0.5,
   },
   assignmentDescriptionTemplate: {
     default:

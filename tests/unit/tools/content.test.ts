@@ -1331,6 +1331,358 @@ describe('associate_rubric', () => {
   })
 })
 
+// ─── get_page ─────────────────────────────────────────────────────────────────
+
+describe('get_page', () => {
+  it('returns page fields including body', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages/week-1-overview`, () =>
+        HttpResponse.json({ ...MOCK_PAGE, body: '<p>Overview content</p>' })
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_page',
+        arguments: { page_url: 'week-1-overview' },
+      })
+    )
+    expect(data.page_id).toBe(801)
+    expect(data.url).toBe('week-1-overview')
+    expect(data.title).toBe('Week 1 Overview')
+    expect(data.body).toBe('<p>Overview content</p>')
+    expect(data.published).toBe(false)
+    expect(data.front_page).toBe(false)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'get_page',
+      arguments: { page_url: 'week-1-overview' },
+    })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── list_assignments ─────────────────────────────────────────────────────────
+
+describe('list_assignments', () => {
+  it('returns all assignments with expected fields', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const assignments = [
+      MOCK_ASSIGNMENT,
+      { ...MOCK_ASSIGNMENT, id: 502, name: 'Week 2 | Coding Assignment' },
+    ]
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () =>
+        HttpResponse.json(assignments)
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_assignments', arguments: {} })
+    )
+    expect(data).toHaveLength(2)
+    expect(data[0].id).toBe(501)
+    expect(data[0].name).toBe('Week 1 | Coding Assignment')
+    expect(data[1].id).toBe(502)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_assignments', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── get_assignment ───────────────────────────────────────────────────────────
+
+describe('get_assignment', () => {
+  it('returns full assignment object including description', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/501`, () =>
+        HttpResponse.json({ ...MOCK_ASSIGNMENT, description: '<p>Do the thing.</p>' })
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_assignment',
+        arguments: { assignment_id: 501 },
+      })
+    )
+    expect(data.id).toBe(501)
+    expect(data.name).toBe('Week 1 | Coding Assignment')
+    expect(data.description).toBe('<p>Do the thing.</p>')
+    expect(data.points_possible).toBe(10)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'get_assignment',
+      arguments: { assignment_id: 501 },
+    })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── list_quizzes ─────────────────────────────────────────────────────────────
+
+describe('list_quizzes', () => {
+  it('returns all quizzes with expected fields', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const quizzes = [
+      MOCK_QUIZ,
+      { ...MOCK_QUIZ, id: 602, title: 'Week 2 | Exit Card (5 mins)' },
+    ]
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () =>
+        HttpResponse.json(quizzes)
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_quizzes', arguments: {} })
+    )
+    expect(data).toHaveLength(2)
+    expect(data[0].id).toBe(601)
+    expect(data[0].title).toBe('Week 1 | Exit Card (5 mins)')
+    expect(data[0].quiz_type).toBe('graded_survey')
+    expect(data[1].id).toBe(602)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_quizzes', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── get_quiz ─────────────────────────────────────────────────────────────────
+
+describe('get_quiz', () => {
+  it('returns quiz and questions in parallel', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes/601`, () =>
+        HttpResponse.json(MOCK_QUIZ)
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes/601/questions`, () =>
+        HttpResponse.json([MOCK_QUIZ_QUESTION])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_quiz',
+        arguments: { quiz_id: 601 },
+      })
+    )
+    expect(data.quiz.id).toBe(601)
+    expect(data.quiz.title).toBe('Week 1 | Exit Card (5 mins)')
+    expect(data.questions).toHaveLength(1)
+    expect(data.questions[0].id).toBe(701)
+    expect(data.questions[0].question_name).toBe('Confidence')
+    expect(data.questions[0].position).toBe(1)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'get_quiz',
+      arguments: { quiz_id: 601 },
+    })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── list_discussions ────────────────────────────────────────────────────────
+
+describe('list_discussions', () => {
+  it('returns all discussion topics with expected fields', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/discussion_topics`, ({ request }) => {
+        const url = new URL(request.url)
+        if (url.searchParams.get('only_announcements') === 'true') {
+          return HttpResponse.json([])
+        }
+        return HttpResponse.json([
+          { id: 1001, title: 'Week 1 Discussion', message: '<p>Discuss.</p>', is_announcement: false, published: true, assignment_id: null },
+          { id: 1002, title: 'Week 2 Discussion', message: null, is_announcement: false, published: false, assignment_id: null },
+        ])
+      })
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_discussions', arguments: {} })
+    )
+    expect(data).toHaveLength(2)
+    expect(data[0].id).toBe(1001)
+    expect(data[0].title).toBe('Week 1 Discussion')
+    expect(data[1].id).toBe(1002)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_discussions', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── list_announcements ──────────────────────────────────────────────────────
+
+describe('list_announcements', () => {
+  it('requests only_announcements=true and returns announcements', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    let capturedUrl = ''
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/discussion_topics`, ({ request }) => {
+        capturedUrl = request.url
+        return HttpResponse.json([
+          { id: 2001, title: 'Important Update', message: '<p>Pay attention.</p>', is_announcement: true, published: true, assignment_id: null },
+        ])
+      })
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_announcements', arguments: {} })
+    )
+    expect(data).toHaveLength(1)
+    expect(data[0].id).toBe(2001)
+    expect(data[0].title).toBe('Important Update')
+    expect(new URL(capturedUrl).searchParams.get('only_announcements')).toBe('true')
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_announcements', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── list_rubrics ─────────────────────────────────────────────────────────────
+
+describe('list_rubrics', () => {
+  it('returns rubrics with id, title, points_possible', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubrics`, () =>
+        HttpResponse.json([
+          { id: 3001, title: 'Coding Rubric', points_possible: 10, context_type: 'Course' },
+          { id: 3002, title: 'Report Rubric', points_possible: 20, context_type: 'Course' },
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_rubrics', arguments: {} })
+    )
+    expect(data).toHaveLength(2)
+    expect(data[0].id).toBe(3001)
+    expect(data[0].title).toBe('Coding Rubric')
+    expect(data[0].points_possible).toBe(10)
+    expect(data[1].id).toBe(3002)
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'list_rubrics', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
+// ─── get_syllabus ─────────────────────────────────────────────────────────────
+
+describe('get_syllabus', () => {
+  it('returns syllabus_body from course include', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () =>
+        HttpResponse.json({
+          id: COURSE_ID,
+          name: 'Test Course',
+          course_code: 'TST',
+          workflow_state: 'available',
+          syllabus_body: '<h1>Course Syllabus</h1><p>Welcome.</p>',
+        })
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'get_syllabus', arguments: {} })
+    )
+    expect(data.syllabus_body).toBe('<h1>Course Syllabus</h1><p>Welcome.</p>')
+  })
+
+  it('returns null when syllabus is empty', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () =>
+        HttpResponse.json({
+          id: COURSE_ID,
+          name: 'Test Course',
+          course_code: 'TST',
+          workflow_state: 'available',
+          syllabus_body: null,
+        })
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'get_syllabus', arguments: {} })
+    )
+    expect(data.syllabus_body).toBeNull()
+  })
+
+  it('returns error when no active course is set', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_syllabus', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('No active course')
+  })
+})
+
 // ─── update_syllabus ────────────────────────────────────────────────────────
 
 describe('update_syllabus', () => {

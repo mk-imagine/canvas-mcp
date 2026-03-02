@@ -783,6 +783,325 @@ describe('Integration: delete_file', () => {
   })
 })
 
+// ─── get_page ─────────────────────────────────────────────────────────────────
+
+describe('Integration: get_page', () => {
+  it('creates a page then retrieves it by slug with body', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_page',
+        arguments: {
+          title: '[MCP TEST] Get Page',
+          body: '<p>Body content for retrieval test.</p>',
+          published: false,
+        },
+      })
+    )
+    createdPageUrls.push(created.url)
+    console.log(`  Created page url="${created.url}"`)
+
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_page',
+        arguments: { page_url: created.url },
+      })
+    )
+
+    expect(data.page_id).toBe(created.page_id)
+    expect(data.url).toBe(created.url)
+    expect(data.title).toBe('[MCP TEST] Get Page')
+    expect(data.body).toContain('Body content for retrieval test.')
+    expect(data.published).toBe(false)
+    expect(data.front_page).toBe(false)
+    console.log(`  Retrieved page page_id=${data.page_id} url="${data.url}"`)
+  })
+})
+
+// ─── list_assignments ─────────────────────────────────────────────────────────
+
+describe('Integration: list_assignments', () => {
+  it('creates an assignment then verifies it appears in the list', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_assignment',
+        arguments: { name: '[MCP TEST] List Assignments Check', points_possible: 5, published: false },
+      })
+    )
+    createdAssignmentIds.push(created.id)
+    console.log(`  Created assignment id=${created.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_assignments', arguments: {} })
+    )
+
+    expect(Array.isArray(data)).toBe(true)
+    expect(data.length).toBeGreaterThan(0)
+    const found = data.find((a: { id: number }) => a.id === created.id)
+    expect(found).toBeDefined()
+    expect(found.name).toBe('[MCP TEST] List Assignments Check')
+    expect(found.points_possible).toBe(5)
+    console.log(`  list_assignments returned ${data.length} items; found id=${created.id}`)
+  })
+})
+
+// ─── get_assignment ───────────────────────────────────────────────────────────
+
+describe('Integration: get_assignment', () => {
+  it('creates an assignment with a description then retrieves it by ID', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_assignment',
+        arguments: {
+          name: '[MCP TEST] Get Assignment',
+          points_possible: 20,
+          description: '<p>Assignment details for retrieval test.</p>',
+          published: false,
+        },
+      })
+    )
+    createdAssignmentIds.push(created.id)
+    console.log(`  Created assignment id=${created.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_assignment',
+        arguments: { assignment_id: created.id },
+      })
+    )
+
+    expect(data.id).toBe(created.id)
+    expect(data.name).toBe('[MCP TEST] Get Assignment')
+    expect(data.points_possible).toBe(20)
+    expect(data.description).toContain('Assignment details for retrieval test.')
+    expect(data.published).toBe(false)
+    console.log(`  Retrieved assignment id=${data.id} name="${data.name}"`)
+  })
+})
+
+// ─── list_quizzes ─────────────────────────────────────────────────────────────
+
+describe('Integration: list_quizzes', () => {
+  it('creates a quiz then verifies it appears in the list', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_quiz',
+        arguments: { title: '[MCP TEST] List Quizzes Check', quiz_type: 'practice_quiz', published: false, questions: [] },
+      })
+    )
+    createdQuizIds.push(created.id)
+    console.log(`  Created quiz id=${created.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_quizzes', arguments: {} })
+    )
+
+    expect(Array.isArray(data)).toBe(true)
+    expect(data.length).toBeGreaterThan(0)
+    const found = data.find((q: { id: number }) => q.id === created.id)
+    expect(found).toBeDefined()
+    expect(found.title).toBe('[MCP TEST] List Quizzes Check')
+    expect(found.quiz_type).toBe('practice_quiz')
+    console.log(`  list_quizzes returned ${data.length} items; found id=${created.id}`)
+  })
+})
+
+// ─── get_quiz ─────────────────────────────────────────────────────────────────
+
+describe('Integration: get_quiz', () => {
+  it('creates a quiz with questions then retrieves quiz and questions together', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_quiz',
+        arguments: {
+          title: '[MCP TEST] Get Quiz',
+          quiz_type: 'graded_survey',
+          published: false,
+          questions: [
+            { question_name: 'Q1', question_text: 'How confident are you?', question_type: 'essay_question', points_possible: 0 },
+            { question_name: 'Q2', question_text: 'What was unclear?', question_type: 'essay_question', points_possible: 0 },
+          ],
+        },
+      })
+    )
+    createdQuizIds.push(created.id)
+    console.log(`  Created quiz id=${created.id} with ${created.questions_created} questions`)
+
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_quiz',
+        arguments: { quiz_id: created.id },
+      })
+    )
+
+    expect(data.quiz.id).toBe(created.id)
+    expect(data.quiz.title).toBe('[MCP TEST] Get Quiz')
+    expect(data.quiz.quiz_type).toBe('graded_survey')
+    expect(Array.isArray(data.questions)).toBe(true)
+    expect(data.questions.length).toBe(2)
+    const q1 = data.questions.find((q: { question_name: string }) => q.question_name === 'Q1')
+    expect(q1).toBeDefined()
+    expect(q1.question_text).toBe('How confident are you?')
+    console.log(`  Retrieved quiz id=${data.quiz.id} with ${data.questions.length} questions`)
+  })
+})
+
+// ─── list_discussions ────────────────────────────────────────────────────────
+
+describe('Integration: list_discussions', () => {
+  it('creates a discussion then verifies it appears in the list', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_discussion',
+        arguments: {
+          title: '[MCP TEST] List Discussions Check',
+          message: '<p>Discussion content.</p>',
+          published: false,
+        },
+      })
+    )
+    createdDiscussionIds.push(created.id)
+    console.log(`  Created discussion id=${created.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_discussions', arguments: {} })
+    )
+
+    expect(Array.isArray(data)).toBe(true)
+    const found = data.find((t: { id: number }) => t.id === created.id)
+    expect(found).toBeDefined()
+    expect(found.title).toBe('[MCP TEST] List Discussions Check')
+    console.log(`  list_discussions returned ${data.length} items; found id=${created.id}`)
+  })
+})
+
+// ─── list_announcements ──────────────────────────────────────────────────────
+
+describe('Integration: list_announcements', () => {
+  it('creates an announcement then verifies it appears in the announcements list', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const created = parseResult(
+      await mcpClient.callTool({
+        name: 'create_announcement',
+        arguments: {
+          title: '[MCP TEST] List Announcements Check',
+          message: '<p>Announcement content.</p>',
+        },
+      })
+    )
+    createdDiscussionIds.push(created.id)
+    console.log(`  Created announcement id=${created.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_announcements', arguments: {} })
+    )
+
+    expect(Array.isArray(data)).toBe(true)
+    const found = data.find((t: { id: number }) => t.id === created.id)
+    expect(found).toBeDefined()
+    expect(found.title).toBe('[MCP TEST] List Announcements Check')
+    console.log(`  list_announcements returned ${data.length} items; found id=${created.id}`)
+  })
+})
+
+// ─── list_rubrics ─────────────────────────────────────────────────────────────
+
+describe('Integration: list_rubrics', () => {
+  it('creates a rubric then verifies it appears in the list', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    const assignment = parseResult(
+      await mcpClient.callTool({
+        name: 'create_assignment',
+        arguments: { name: '[MCP TEST] Rubric List Host', points_possible: 10, published: false },
+      })
+    )
+    createdAssignmentIds.push(assignment.id)
+    console.log(`  Created host assignment id=${assignment.id}`)
+
+    const rubric = parseResult(
+      await mcpClient.callTool({
+        name: 'create_rubric',
+        arguments: {
+          title: '[MCP TEST] List Rubrics Check',
+          assignment_id: assignment.id,
+          criteria: [
+            { description: 'Quality', points: 10, ratings: [{ description: 'Good', points: 10 }, { description: 'Poor', points: 0 }] },
+          ],
+        },
+      })
+    )
+    console.log(`  Created rubric id=${rubric.id}`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'list_rubrics', arguments: {} })
+    )
+
+    expect(Array.isArray(data)).toBe(true)
+    const found = data.find((r: { id: number }) => r.id === rubric.id)
+    expect(found).toBeDefined()
+    expect(found.title).toContain('[MCP TEST] List Rubrics Check')
+    expect(found.points_possible).toBe(10)
+    console.log(`  list_rubrics returned ${data.length} items; found id=${rubric.id}`)
+  })
+})
+
+// ─── get_syllabus ─────────────────────────────────────────────────────────────
+
+describe('Integration: get_syllabus', () => {
+  it('sets the syllabus then retrieves it', async () => {
+    const configPath = makeTmpConfigPath()
+    makeConfig(configPath)
+    const { mcpClient } = await makeIntegrationClient(configPath)
+
+    await mcpClient.callTool({
+      name: 'update_syllabus',
+      arguments: { body: '<h1>[MCP TEST] Get Syllabus</h1><p>Content.</p>' },
+    })
+    console.log(`  Set syllabus body`)
+
+    const data = parseResult(
+      await mcpClient.callTool({ name: 'get_syllabus', arguments: {} })
+    )
+
+    expect(data.syllabus_body).toContain('[MCP TEST] Get Syllabus')
+    expect(data.syllabus_body).toContain('<p>Content.</p>')
+    console.log(`  Retrieved syllabus (${data.syllabus_body?.length ?? 0} chars)`)
+
+    // Restore
+    await mcpClient.callTool({ name: 'clear_syllabus', arguments: {} })
+    console.log(`  Cleared syllabus`)
+  })
+})
+
 // ─── associate_rubric ────────────────────────────────────────────────────────
 
 describe('Integration: associate_rubric', () => {

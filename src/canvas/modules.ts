@@ -88,6 +88,7 @@ export interface CreateModuleItemParams {
   page_url?: string
   external_url?: string
   position?: number
+  indent?: number
   new_tab?: boolean
   completion_requirement?: {
     type: 'min_score' | 'must_submit' | 'must_view'
@@ -98,6 +99,7 @@ export interface CreateModuleItemParams {
 export interface UpdateModuleItemParams {
   title?: string
   position?: number
+  indent?: number
   completion_requirement?: {
     type: 'min_score' | 'must_submit' | 'must_view'
     min_score?: number

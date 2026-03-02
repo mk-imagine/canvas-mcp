@@ -101,6 +101,17 @@ export async function deleteAssignmentGroup(
   return client.delete(`/api/v1/courses/${courseId}/assignment_groups/${groupId}`)
 }
 
+export async function searchAssignments(
+  client: CanvasClient,
+  courseId: number,
+  searchTerm: string
+): Promise<CanvasAssignmentFull[]> {
+  return client.get<CanvasAssignmentFull>(
+    `/api/v1/courses/${courseId}/assignments`,
+    { search_term: searchTerm, per_page: '100' }
+  )
+}
+
 export async function deleteAssignment(
   client: CanvasClient,
   courseId: number,

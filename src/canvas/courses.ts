@@ -6,6 +6,7 @@ export interface CanvasCourse {
   course_code: string
   workflow_state: string
   term?: { name: string }
+  syllabus_body?: string | null
 }
 
 export async function getCourse(client: CanvasClient, courseId: number): Promise<CanvasCourse> {
@@ -21,6 +22,14 @@ export async function updateCourse(
     `/api/v1/courses/${courseId}`,
     { course: params }
   )
+}
+
+export async function getSyllabus(client: CanvasClient, courseId: number): Promise<string | null> {
+  const course = await client.getOne<CanvasCourse>(
+    `/api/v1/courses/${courseId}`,
+    { 'include[]': 'syllabus_body' }
+  )
+  return course.syllabus_body ?? null
 }
 
 export async function fetchTeacherCourses(client: CanvasClient): Promise<CanvasCourse[]> {

@@ -1,4 +1,3 @@
-node_modules/
 dist/
 .env
 .env.test
@@ -6,6 +5,3 @@ dist/
 
 # VS Code
 .history/
-
-# LLMs
-.claude/

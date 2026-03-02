@@ -85,6 +85,7 @@ canvas-teacher-mcp/
 │   │   ├── discussions.ts    # Discussion topic & announcement API calls
 │   │   ├── files.ts          # File upload (3-step Canvas/S3 flow) & delete
 │   │   ├── rubrics.ts        # Rubric CRUD + association API calls
+│   │   ├── search.ts         # Canvas Smart Search API (beta)
 │   │   ├── submissions.ts    # Submission & grade API calls
 │   │   └── courses.ts        # Course & enrollment API calls
 │   ├── tools/
@@ -92,7 +93,8 @@ canvas-teacher-mcp/
 │   │   ├── content.ts        # Low-level CRUD tools (assignments, quizzes, pages, modules, module items)
 │   │   ├── modules.ts        # High-level module creation tools (lesson, solution, clone)
 │   │   ├── reporting.ts      # Grade & submission reporting tools
-│   │   └── reset.ts          # Destructive reset tools
+│   │   ├── reset.ts          # Destructive reset tools
+│   │   └── find.ts           # Smart find/mutate tools + Canvas Smart Search
 │   ├── security/
 │   │   └── secure-store.ts   # AES-256-GCM in-memory PII store (session tokens, mlock)
 │   ├── templates/
@@ -154,6 +156,13 @@ Config is stored at `~/.config/mcp/canvas-teacher-mcp/config.json` and is read o
   },
   "templates": {
     // See Section 4 — user-editable, overrides defaults
+  },
+  "smartSearch": {
+    // Default distance threshold for search_course results.
+    // Lower = stricter (fewer, more relevant results).
+    // Higher = more permissive (more results, less relevant).
+    // Can be overridden per-call via the search_course threshold param.
+    "distanceThreshold": 0.5
   },
   "assignmentDescriptionTemplate": {
     // Handlebars HTML template for assignment descriptions.
@@ -905,6 +914,142 @@ All tools accept an optional `course_id` parameter. If omitted, the active cours
 
 ---
 
+### 5.4b Content Retrieval Tools
+
+Read-only tools for inspecting existing course content. Enables the review-then-update workflow — read existing content, analyze or improve it, then call the corresponding update tool.
+
+---
+
+#### `get_page`
+
+**Purpose:** Retrieve a single wiki page by its URL slug, including the full HTML body.
+
+**Inputs:**
+- `page_url` (string, required): URL slug (e.g. `"week-2-overview"`). Returned by `list_pages` as the `url` field.
+- `course_id` (number, optional).
+
+**Output:** `{ page_id, url, title, body, published, front_page }`
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/pages/:url`
+
+---
+
+#### `list_assignments`
+
+**Purpose:** List all assignments in a course, including quiz-backed assignments.
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** Array of `{ id, name, points_possible, due_at, submission_types, published, description }`.
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/assignments`
+
+---
+
+#### `get_assignment`
+
+**Purpose:** Retrieve a single assignment by ID, including the full HTML description and rubric settings.
+
+**Inputs:**
+- `assignment_id` (number, required).
+- `course_id` (number, optional).
+
+**Output:** Full `CanvasAssignmentFull` object (`{ id, name, points_possible, due_at, html_url, description, submission_types, assignment_group_id, published, rubric_settings? }`).
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/assignments/:assignment_id`
+
+---
+
+#### `list_quizzes`
+
+**Purpose:** List all Classic Quizzes in a course.
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** Array of `{ id, title, quiz_type, points_possible, due_at, published }`.
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/quizzes`
+
+---
+
+#### `get_quiz`
+
+**Purpose:** Retrieve a single Classic Quiz and all its questions in one call.
+
+**Inputs:**
+- `quiz_id` (number, required).
+- `course_id` (number, optional).
+
+**Output:** `{ quiz: { id, title, quiz_type, points_possible, ... }, questions: [{ id, position, question_name, question_text, question_type, points_possible }] }`
+
+**Canvas API Calls (parallel):**
+- `GET /api/v1/courses/:id/quizzes/:quiz_id`
+- `GET /api/v1/courses/:id/quizzes/:quiz_id/questions`
+
+---
+
+#### `list_discussions`
+
+**Purpose:** List all discussion topics in a course (excludes announcements).
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** Array of `{ id, title, message, published, assignment_id }`.
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/discussion_topics`
+
+---
+
+#### `list_announcements`
+
+**Purpose:** List all announcements in a course.
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** Array of `{ id, title, message, published, assignment_id }`.
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/discussion_topics?only_announcements=true`
+
+---
+
+#### `list_rubrics`
+
+**Purpose:** List all rubrics in a course with basic metadata (title, points). Canvas's list endpoint does not return full criteria detail — use individual rubric association data for full criteria.
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** Array of `{ id, title, points_possible }`.
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/rubrics`
+
+---
+
+#### `get_syllabus`
+
+**Purpose:** Retrieve the course syllabus body HTML.
+
+**Inputs:**
+- `course_id` (number, optional).
+
+**Output:** `{ syllabus_body: string | null }`
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id?include[]=syllabus_body`
+
+---
+
 ### 5.5 Reporting Tools
 
 All reporting tools return structured data suitable for display as a table or summary narrative. They join multiple Canvas API responses internally.
@@ -1138,38 +1283,133 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
 
 ---
 
+### 5.7 Smart Find & Mutate Tools
+
+These tools combine a name-based lookup step with a Canvas operation, eliminating the need for separate "list → get ID → operate" sequences. All lookups are case-insensitive partial matches; if multiple items match, the first is used with a warning.
+
+---
+
+#### `find_item`
+
+**Purpose:** Find a course item by name and return its full details in one call.
+
+**Input:** A `type` discriminated union — one of `page`, `assignment`, `quiz`, `module`, `module_item`, `discussion`, `announcement`. Each variant has `search` (string), optional `course_id`, and (for `module_item`) required `module_name`.
+
+**Output:** Full item details. Pages include `body`; assignments include `description`; quizzes include `questions` array. Includes `matched_title` and optional `warning` if multiple items matched.
+
+**Canvas API Calls:** Varies by type — uses `GET /pages`, `GET /assignments`, `GET /quizzes`, `GET /modules`, `GET /modules/:id/items`, or `GET /discussion_topics` to fetch candidates, then fetches the matched item's details.
+
+---
+
+#### `update_item`
+
+**Purpose:** Find a course item by name then update it in a single call. Supports: `page`, `assignment`, `quiz`, `module`, `module_item`.
+
+**Input:** Same `type` discriminated union as `find_item`, plus updatable fields for the chosen type (e.g., `title`, `body`, `published` for pages; `name`, `points_possible`, `due_at`, `published` for assignments).
+
+**Output:** The updated Canvas object plus `matched_title`.
+
+**Canvas API Calls:** List to find, then `PUT` on the matched item.
+
+---
+
+#### `delete_item`
+
+**Purpose:** Find a course item by name then delete or remove it. Supports: `page`, `assignment`, `quiz`, `module`, `module_item`, `discussion`, `announcement`.
+
+**Notes:**
+- Deleting a `module_item` only removes it from the module — the underlying content (page, assignment, etc.) is NOT deleted.
+- Pages designated as the front page cannot be deleted.
+- Assignment deletion pre-deletes any associated rubric first (same as `delete_assignment`).
+
+**Canvas API Calls:** List to find, then `DELETE` on the matched item (or `DELETE` the module item for `module_item` type).
+
+---
+
+### 5.8 Canvas Smart Search
+
+---
+
+#### `search_course`
+
+**Purpose:** Search course content using Canvas Smart Search — an AI-powered semantic/vector similarity search that finds content by meaning rather than exact keyword match. Returns results ranked by `distance` score (0 = perfect match, 1 = completely unrelated).
+
+**Inputs:**
+- `query` (string, required): Natural language or keyword search query.
+- `filter` (string[], optional): Limit to one or more content types: `pages`, `assignments`, `announcements`, `discussion_topics`. Omit to search all.
+- `threshold` (number, optional): Max distance score to include. Overrides `config.smartSearch.distanceThreshold`.
+- `limit` (number, optional): Max results after threshold filtering. Returns all passing results if omitted.
+- `include_body` (boolean, optional): Include full HTML body in results. Default: `false`.
+- `course_id` (number, optional): Overrides active course.
+
+**Output:**
+```jsonc
+{
+  "query": "python data science",
+  "threshold": 0.5,
+  "total_results": 4,
+  "returned_results": 3,
+  "results": [
+    { "content_type": "WikiPage", "content_id": 801, "title": "Week 1 Overview",
+      "distance": 0.12, "html_url": "...", "published": true, "due_at": null }
+  ]
+}
+```
+
+**Canvas API Calls:**
+- `GET /api/v1/courses/:id/smartsearch?q=...&filter[]=...&include[]=status`
+
+**Notes:**
+- Canvas Smart Search is a **beta feature** with limited availability. The tool wraps the API call in a try/catch and returns a descriptive `toolError` if the endpoint is unavailable.
+- `distance` is a semantic similarity metric. `0.5` is the default threshold — filters obvious noise while returning moderately related results.
+
+---
+
+#### `set_smart_search_threshold`
+
+**Purpose:** Set the default distance threshold used by `search_course`. Persisted to `config.smartSearch.distanceThreshold`.
+
+**Inputs:**
+- `threshold` (number, required): New default. Lower = stricter (e.g. 0.2 — only very close matches). Higher = more permissive (e.g. 0.8 — loosely related content).
+
+**Output:** `{ smartSearch: { distanceThreshold: <new value> } }`
+
+**Canvas API Calls:** None — config file write only.
+
+---
+
 ## 6. Canvas API Endpoint Reference
 
 | Method   | Endpoint                                                              | Used By |
 |----------|-----------------------------------------------------------------------|---------|
 | GET      | `/api/v1/courses`                                                     | `list_courses` |
 | GET      | `/api/v1/courses/:id`                                                 | `set_active_course`, `reset_course` |
-| GET      | `/api/v1/courses/:id/modules`                                         | `list_modules`, `preview_course_reset` |
+| GET      | `/api/v1/courses/:id/modules`                                         | `list_modules`, `preview_course_reset`, `find_item`, `update_item`, `delete_item` |
 | POST     | `/api/v1/courses/:id/modules`                                         | `create_lesson_module`, `create_solution_module` |
 | PUT      | `/api/v1/courses/:id/modules/:module_id`                              | `update_module`, publish/unpublish |
 | DELETE   | `/api/v1/courses/:id/modules/:module_id`                              | `delete_module`, `reset_course` |
-| GET      | `/api/v1/courses/:id/modules/:module_id/items`                        | `get_module_summary` |
+| GET      | `/api/v1/courses/:id/modules/:module_id/items`                        | `get_module_summary`, `find_item`, `update_item`, `delete_item` |
 | POST     | `/api/v1/courses/:id/modules/:module_id/items`                        | `add_module_item`, `create_lesson_module` |
 | PUT      | `/api/v1/courses/:id/modules/:module_id/items/:item_id`               | `update_module_item` |
 | DELETE   | `/api/v1/courses/:id/modules/:module_id/items/:item_id`               | `remove_module_item` |
-| GET      | `/api/v1/courses/:id/assignments`                                     | `preview_course_reset` |
-| GET      | `/api/v1/courses/:id/assignments/:assignment_id`                      | `get_module_summary` (HTML) |
+| GET      | `/api/v1/courses/:id/assignments`                                     | `preview_course_reset`, `find_item`, `update_item`, `delete_item`, `list_assignments` |
+| GET      | `/api/v1/courses/:id/assignments/:assignment_id`                      | `get_module_summary` (HTML), `get_assignment`, `find_item` |
 | POST     | `/api/v1/courses/:id/assignments`                                     | `create_assignment`, `create_lesson_module` |
 | PUT      | `/api/v1/courses/:id/assignments/:assignment_id`                      | `update_assignment` |
 | DELETE   | `/api/v1/courses/:id/assignments/:assignment_id`                      | `delete_assignment`, `reset_course` |
 | GET      | `/api/v1/courses/:id/assignment_groups`                               | `list_assignment_groups`, `preview_course_reset` |
 | DELETE   | `/api/v1/courses/:id/assignment_groups/:id`                           | `reset_course` |
-| GET      | `/api/v1/courses/:id/quizzes`                                         | `preview_course_reset` |
+| GET      | `/api/v1/courses/:id/quizzes`                                         | `preview_course_reset`, `find_item`, `update_item`, `delete_item`, `list_quizzes` |
 | POST     | `/api/v1/courses/:id/quizzes`                                         | `create_quiz`, `create_lesson_module` |
 | POST     | `/api/v1/courses/:id/quizzes/:quiz_id/questions`                      | `create_quiz` |
 | PUT      | `/api/v1/courses/:id/quizzes/:quiz_id`                                | `update_quiz` |
 | DELETE   | `/api/v1/courses/:id/quizzes/:quiz_id`                                | `delete_quiz`, `reset_course` |
-| GET      | `/api/v1/courses/:id/pages`                                           | `preview_course_reset`, `reset_course` |
-| GET      | `/api/v1/courses/:id/pages/:url`                                      | `delete_page` |
+| GET      | `/api/v1/courses/:id/pages`                                           | `preview_course_reset`, `reset_course`, `find_item`, `update_item`, `delete_item` |
+| GET      | `/api/v1/courses/:id/pages/:url`                                      | `delete_page`, `get_page`, `find_item` |
 | POST     | `/api/v1/courses/:id/pages`                                           | `create_page`, `create_lesson_module` |
 | PUT      | `/api/v1/courses/:id/pages/:url`                                      | `reset_course` (unset front page before delete) |
 | DELETE   | `/api/v1/courses/:id/pages/:url`                                      | `delete_page`, `reset_course` |
-| GET      | `/api/v1/courses/:id/discussion_topics`                               | `preview_course_reset`, `reset_course` |
+| GET      | `/api/v1/courses/:id/discussion_topics`                               | `preview_course_reset`, `reset_course`, `find_item`, `delete_item`, `list_discussions`, `list_announcements` |
 | GET      | `/api/v1/courses/:id/discussion_topics?only_announcements=true`       | `preview_course_reset`, `reset_course` |
 | POST     | `/api/v1/courses/:id/discussion_topics`                               | `create_discussion`, `create_announcement` |
 | DELETE   | `/api/v1/courses/:id/discussion_topics/:id`                           | `delete_discussion`, `delete_announcement`, `reset_course` |
@@ -1186,6 +1426,7 @@ See [Section 10](#10-safety--destructive-operations) for the full safety protoco
 | GET      | `/api/v1/courses/:id/enrollments`                                     | `get_class_grade_summary`, `get_student_report` |
 | GET      | `/api/v1/courses/:id/students/submissions`                            | `get_class_grade_summary`, `get_missing_assignments`, `get_late_assignments`, `get_student_report` |
 | GET      | `/api/v1/courses/:id/assignments/:assignment_id/submissions`          | `get_assignment_breakdown` |
+| GET      | `/api/v1/courses/:id/smartsearch`                                     | `search_course` (beta) |
 
 ---
 
@@ -1603,6 +1844,72 @@ See [Section 14](#14-ferpa-pii-blinding) for the full security architecture.
 
 ---
 
+### Phase 7 — Content Retrieval Tools - COMPLETE
+
+**Prerequisites:** Phase 3 and 4 complete (low-level CRUD tools must exist as patterns).
+
+Adds read-only retrieval tools for all major content types. These complement the existing low-level write tools and allow the AI to inspect existing course content before modifying it.
+
+**Deliverables:**
+- Added to `src/tools/content.ts`: `get_page`, `list_assignments`, `get_assignment`, `list_quizzes`, `get_quiz`, `list_discussions`, `list_announcements`, `list_rubrics`, `get_syllabus`
+- Canvas API functions used: `getPage` (pages.ts), `listAssignments` (assignments.ts), `getAssignment` (assignments.ts), `listQuizzes`/`getQuiz`/`listQuizQuestions` (quizzes.ts), `listDiscussionTopics`/`listAnnouncements` (discussions.ts), `listRubrics` (rubrics.ts), `getCourse` with syllabus include (courses.ts)
+
+**Result:** Tests increased to 232 unit tests + 87 integration tests.
+
+**Exit criterion:** All content retrieval tools return correct data from Canvas. All Phase 7 tests pass.
+
+---
+
+### Phase 8 — Smart Find & Mutate Tools - COMPLETE
+
+**Prerequisites:** Phase 7 complete.
+
+Adds combined lookup-then-operate tools that eliminate the need for multi-step "list → find ID → call tool" workflows. Uses `z.discriminatedUnion` for type-safe input schemas.
+
+**Deliverables:**
+- New file: `src/tools/find.ts` — exports `registerFindTools()`
+- New tools: `find_item`, `update_item`, `delete_item`
+- Extended: `get_module_summary` now accepts `module_name` (string, case-insensitive partial match) in addition to `module_id`
+- New canvas functions: `searchPages()` (pages.ts), `searchAssignments()` (assignments.ts) — both call `GET /pages?search_term=...` and `GET /assignments?search_term=...` respectively
+- `src/index.ts` updated to call `registerFindTools()`
+
+**New files:** `src/tools/find.ts`, `tests/unit/tools/find.test.ts`, `tests/integration/find.test.ts`
+
+**Result:** 232 unit tests + 87 integration tests (all passing).
+
+**Exit criterion:** `find_item` returns correct full details for all 7 item types. `update_item` and `delete_item` perform the correct Canvas operation on the matched item. Multi-match warning is included. All Phase 8 tests pass.
+
+---
+
+### Phase 9 — Canvas Smart Search - COMPLETE
+
+**Prerequisites:** Phase 8 complete.
+
+Adds AI-powered semantic search via the Canvas Smart Search beta API. Includes configurable distance-based filtering and a persistent config default.
+
+**Canvas API:** `GET /api/v1/courses/:id/smartsearch` (beta, limited availability)
+- Params: `q` (required), `filter[]` (optional content type filter), `include[]` (optional: `status`, `modules`)
+- Response: array of `{ content_id, content_type, title, body, html_url, distance }` — lower distance = closer semantic match
+
+**Deliverables:**
+- New file: `src/canvas/search.ts` — `CanvasSmartSearchResult` interface + `smartSearch()` function using `client.getWithArrayParams()`
+- New tools in `src/tools/find.ts`: `search_course`, `set_smart_search_threshold`
+- Config schema (`src/config/schema.ts`): added `smartSearch: { distanceThreshold: number }` to `CanvasTeacherConfig` and `DEFAULT_CONFIG` (default: `0.5`)
+
+**New files:** `src/canvas/search.ts`
+
+**Modified files:** `src/config/schema.ts`, `src/tools/find.ts`, `tests/unit/tools/find.test.ts`, `tests/integration/find.test.ts`
+
+**Tests written in this phase:**
+- Unit (9 new): threshold filtering using config default; threshold override; limit param; body excluded by default / `include_body: true`; empty results (not error) when nothing passes threshold; graceful `toolError` when Canvas API unavailable; `toolError` when no active course; `set_smart_search_threshold` updates config and new default is used on next search call
+- Integration (1 new, resilient): calls Smart Search with `threshold: 1.0`; if API returns "Smart Search failed" string, logs skip message and passes; otherwise asserts `data.query`, `data.results` array, `data.total_results` number
+
+**Result:** 240 unit tests + 88 integration tests (all passing).
+
+**Exit criterion:** `search_course` returns threshold-filtered results with distance scores. `set_smart_search_threshold` persists to config file. Tool returns a descriptive error (not a thrown exception) if Smart Search is unavailable on the Canvas instance. All Phase 9 tests pass.
+
+---
+
 ## 9. Error Handling Philosophy
 
 ### Principle: Partial Success is Better Than Silent Failure
@@ -1921,6 +2228,9 @@ Each phase's exit criterion includes passing its associated tests before moving 
 | 4 — High-level creation | `dry_run` validation, slot matching, partial failure | Lesson + solution module suites, clone suite | High-level tool schemas |
 | 5 — Destructive ops | Confirmation text matching | Full sandbox reset suite | Destructive tool schemas |
 | 6 — PII Blinding ✓ | `SecureStore` encrypt/decrypt roundtrip (10 tests), token consistency, zero-fill on destroy, `audience` annotations in reporting tool responses, token input resolution on `get_student_report`; `resolve_student`; `list_blinded_students` | No raw PII in `assistant`-audience content blocks; `resolve_student` carries `audience: ["user"]`; token round-trip from `get_class_grade_summary` → `get_student_report`; sort-order assertion (missing_count DESC) instead of brittle "Student 4 first" check | Blinded tool response format; `audience` annotation handling |
+| 7 — Content retrieval ✓ | All 9 retrieval tools return correct data from Canvas (unit + integration); `get_syllabus` verifies round-trip with `update_syllabus` | Retrieval tool round-trips against seeded content | All retrieval tool schemas |
+| 8 — Smart find/mutate ✓ | All 7 `find_item` types; `update_item` for 5 types; `delete_item` for 7 types; multi-match warning; `module_name` on `get_module_summary` | `find_item` page/assignment/module_item; `update_item` assignment; `delete_item` page | Discriminated union schema validation |
+| 9 — Smart Search ✓ | Threshold filtering, `limit`, `include_body`, API error handling, config persistence; 9 unit tests | 1 resilient test — passes gracefully if Smart Search unavailable on instance | `search_course` / `set_smart_search_threshold` schemas |
 
 ---
 

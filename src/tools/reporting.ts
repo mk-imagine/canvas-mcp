@@ -107,8 +107,10 @@ export function registerReportingTools(
     {
       description: 'Get a module\'s full item list including types, titles, points, due dates, and optionally assignment description HTML.',
       inputSchema: z.object({
-        module_id: z.number().int().positive()
-          .describe('Canvas module ID'),
+        module_id: z.number().int().positive().optional()
+          .describe('Canvas module ID. Provide this or module_name.'),
+        module_name: z.string().optional()
+          .describe('Module name to search for (case-insensitive partial match). Provide this or module_id.'),
         include_html: z.boolean().optional()
           .describe('Fetch raw description HTML for assignment items. Default: false.'),
         course_id: z.number().int().positive().optional()
@@ -124,9 +126,28 @@ export function registerReportingTools(
         return toolError((err as Error).message)
       }
 
+      let moduleId: number
+      let moduleWarning: string | undefined
+      if (args.module_id != null) {
+        moduleId = args.module_id
+      } else if (args.module_name != null) {
+        const allModules = await listModules(client, courseId)
+        const lower = args.module_name.toLowerCase()
+        const matches = allModules.filter(m => m.name.toLowerCase().includes(lower))
+        if (matches.length === 0) {
+          return toolError(`No module found matching "${args.module_name}"`)
+        }
+        if (matches.length > 1) {
+          moduleWarning = `${matches.length} modules matched "${args.module_name}"; using first: "${matches[0].name}".`
+        }
+        moduleId = matches[0].id
+      } else {
+        return toolError('Provide either module_id or module_name.')
+      }
+
       const [module, items] = await Promise.all([
-        getModule(client, courseId, args.module_id),
-        listModuleItems(client, courseId, args.module_id),
+        getModule(client, courseId, moduleId),
+        listModuleItems(client, courseId, moduleId),
       ])
 
       // Optionally fetch assignment descriptions in parallel
@@ -145,7 +166,7 @@ export function registerReportingTools(
         }
       }
 
-      const result = {
+      const result: Record<string, unknown> = {
         module: {
           id: module.id,
           name: module.name,
@@ -171,6 +192,7 @@ export function registerReportingTools(
           return base
         }),
       }
+      if (moduleWarning != null) result.warning = moduleWarning
       return toJson(result)
     }
   )

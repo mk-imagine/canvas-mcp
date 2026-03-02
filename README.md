@@ -15,6 +15,8 @@ Connect this server to Claude Desktop and ask it to:
 - Create and associate rubrics with assignments
 - Scaffold a full week's module from a template in one call
 - Reset a sandbox course with a confirmation gate
+- Find any item by name across pages, assignments, quizzes, modules, discussions, and announcements
+- Search course content semantically using Canvas Smart Search (beta)
 
 ## Requirements
 
@@ -233,7 +235,7 @@ Student names and Canvas IDs in reporting tool responses are automatically repla
 | `get_late_assignments` | All late assignments grouped by student. Student names replaced with session tokens. |
 | `resolve_student` | Look up the real name and Canvas ID for a session token. Response is shown to you only — not passed to the AI. |
 | `list_blinded_students` | List all session tokens registered so far in the current session. No names included. |
-
+ 
 ### Content creation (low-level)
 
 | Tool | Description |
@@ -266,6 +268,35 @@ Student names and Canvas IDs in reporting tool responses are automatically repla
 | `remove_module_item` | Remove an item from a module (does not delete the underlying content). |
 | `update_module` | Update module settings (name, lock date, prerequisites, published state). |
 | `delete_module` | Delete a module and its items. Does not delete underlying assignments/pages/quizzes. |
+
+### Content retrieval
+
+| Tool | Description |
+|------|-------------|
+| `get_page` | Get a page's full content by URL slug. |
+| `list_assignments` | List all assignments in the active course. |
+| `get_assignment` | Get a single assignment by ID, including description HTML. |
+| `list_quizzes` | List all quizzes in the active course. |
+| `get_quiz` | Get a single quiz by ID, including questions. |
+| `list_discussions` | List all discussion topics. |
+| `list_announcements` | List all announcements. |
+| `list_rubrics` | List all rubrics in the course. |
+| `get_syllabus` | Get the course syllabus body HTML. |
+
+### Smart find & mutate
+
+| Tool | Description |
+|------|-------------|
+| `find_item` | Find any course item by partial name and return its full details. Supports: page (with body), assignment (with description), quiz (with questions), module, module_item, discussion, announcement. Returns first case-insensitive partial match with a warning if multiple items matched. |
+| `update_item` | Find a course item by name then update it. Supports: page, assignment, quiz, module, module_item. Provide only the fields to change. |
+| `delete_item` | Find a course item by name then delete or remove it. Supports: page, assignment, quiz, module, module_item, discussion, announcement. Deleting a module_item only removes it from the module — underlying content is not deleted. |
+
+### Smart search (Currently in BETA on Canvas)
+
+| Tool | Description |
+|------|-------------|
+| `search_course` | Search course content using Canvas Smart Search (AI-powered semantic search). Returns results with distance scores — lower = closer match. Supports content type filtering, distance threshold, result limit, and optional body inclusion. Requires Canvas Smart Search beta to be enabled on your instance. |
+| `set_smart_search_threshold` | Set the default distance threshold used by `search_course`. Lower values are stricter (e.g. 0.2); higher values are more permissive (e.g. 0.8). Default: 0.5. Persisted to the config file. |
 
 ### Module creation (high-level)
 
@@ -376,7 +407,8 @@ src/
 │   ├── pages.ts          # Page API calls (CRUD + front page handling)
 │   ├── discussions.ts    # Discussion topic & announcement API calls
 │   ├── files.ts          # File upload (3-step Canvas/S3 flow) & delete
-│   └── rubrics.ts        # Rubric CRUD + association API calls
+│   ├── rubrics.ts        # Rubric CRUD + association API calls
+│   └── search.ts         # Canvas Smart Search API
 ├── config/
 │   ├── schema.ts         # Config types and DEFAULT_CONFIG
 │   └── manager.ts        # Read/write ~/.canvas-teacher-mcp/config.json
@@ -389,10 +421,11 @@ src/
     ├── content.ts        # Low-level CRUD tools
     ├── modules.ts        # High-level module creation tools
     ├── reporting.ts      # Grade & submission reporting tools (with PII blinding)
-    └── reset.ts          # preview_course_reset, reset_course
+    ├── reset.ts          # preview_course_reset, reset_course
+    └── find.ts           # Smart find/mutate + smart search tools
 tests/
-├── unit/                 # Vitest + msw, no credentials required (183 tests)
-└── integration/          # Real Canvas API, requires .env.test (72 tests)
+├── unit/                 # Vitest + msw, no credentials required (240 tests)
+└── integration/          # Real Canvas API, requires .env.test (88 tests)
 ```
 
 ## Roadmap
@@ -407,3 +440,6 @@ tests/
 | 5b — Complete reset | Complete | Full content sweep: discussions, announcements, files, rubrics, assignment groups, syllabus |
 | 5b+ — Creation tools | Complete | `create_discussion`, `create_announcement`, `upload_file`, `create_rubric`, `associate_rubric`, `update_syllabus`; rubric zombie recovery in `reset_course` |
 | 6 — FERPA PII blinding | Complete | Always-on blinding of student names/IDs in all reporting tools; session tokens; `resolve_student`, `list_blinded_students` |
+| 7 — Content retrieval | Complete | `get_page`, `list_assignments`, `get_assignment`, `list_quizzes`, `get_quiz`, `list_discussions`, `list_announcements`, `list_rubrics`, `get_syllabus` |
+| 8 — Smart find & mutate | Complete | `find_item`, `update_item`, `delete_item` (name-based lookup for all content types); `get_module_summary` extended with `module_name` param |
+| 9 — Canvas Smart Search | Complete | `search_course` (semantic search via Canvas beta API, configurable distance threshold), `set_smart_search_threshold`, `config.smartSearch.distanceThreshold` |

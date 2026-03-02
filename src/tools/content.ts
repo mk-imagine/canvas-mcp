@@ -8,26 +8,38 @@ import {
   createAssignment,
   updateAssignment,
   deleteAssignment,
+  listAssignments,
+  getAssignment,
 } from '../canvas/assignments.js'
 import {
   createQuiz,
   updateQuiz,
   createQuizQuestion,
   deleteQuiz,
+  listQuizzes,
+  getQuiz,
+  listQuizQuestions,
 } from '../canvas/quizzes.js'
 import {
   createModule,
   updateModule,
   deleteModule,
+  listModuleItems,
   createModuleItem,
   updateModuleItem,
   deleteModuleItem,
+  type CanvasModuleItem,
 } from '../canvas/modules.js'
 import { createPage, updatePage, listPages, deletePage, getPage } from '../canvas/pages.js'
-import { createDiscussionTopic, deleteDiscussionTopic } from '../canvas/discussions.js'
+import {
+  createDiscussionTopic,
+  deleteDiscussionTopic,
+  listDiscussionTopics,
+  listAnnouncements,
+} from '../canvas/discussions.js'
 import { uploadFile, deleteFile } from '../canvas/files.js'
-import { createRubric, createRubricAssociation } from '../canvas/rubrics.js'
-import { updateCourse } from '../canvas/courses.js'
+import { createRubric, createRubricAssociation, listRubrics } from '../canvas/rubrics.js'
+import { updateCourse, getSyllabus } from '../canvas/courses.js'
 
 function resolveCourseId(config: CanvasTeacherConfig, override?: number): number {
   const id = override ?? config.program.activeCourseId
@@ -49,7 +61,7 @@ function renderTemplate(template: string, vars: Record<string, string | undefine
   return Handlebars.compile(template)(vars)
 }
 
-const completionRequirementSchema = z.object({
+export const completionRequirementSchema = z.object({
   type: z.enum(['min_score', 'must_submit', 'must_view']),
   min_score: z.number().optional(),
 }).optional()
@@ -171,6 +183,66 @@ export function registerContentTools(
         published: assignment.published,
         html_url: assignment.html_url,
       })
+    }
+  )
+
+  // ── list_assignments ─────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_assignments',
+    {
+      description: 'List all assignments in a course, including quiz-backed assignments.',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const assignments = await listAssignments(client, courseId)
+      return toJson(assignments.map(a => ({
+        id: a.id,
+        name: a.name,
+        points_possible: a.points_possible,
+        due_at: a.due_at,
+        submission_types: a.submission_types,
+        published: a.published,
+        description: a.description,
+      })))
+    }
+  )
+
+  // ── get_assignment ────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'get_assignment',
+    {
+      description: 'Retrieve a single assignment by ID, including full HTML description.',
+      inputSchema: z.object({
+        assignment_id: z.number().int().positive()
+          .describe('Canvas assignment ID'),
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const assignment = await getAssignment(client, courseId, args.assignment_id)
+      return toJson(assignment)
     }
   )
 
@@ -377,6 +449,78 @@ export function registerContentTools(
     }
   )
 
+  // ── list_quizzes ──────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_quizzes',
+    {
+      description: 'List all Classic Quizzes in a course.',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const quizzes = await listQuizzes(client, courseId)
+      return toJson(quizzes.map(q => ({
+        id: q.id,
+        title: q.title,
+        quiz_type: q.quiz_type,
+        points_possible: q.points_possible,
+        due_at: q.due_at,
+        published: q.published,
+      })))
+    }
+  )
+
+  // ── get_quiz ──────────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'get_quiz',
+    {
+      description: 'Retrieve a single Classic Quiz by ID, including all questions.',
+      inputSchema: z.object({
+        quiz_id: z.number().int().positive()
+          .describe('Canvas quiz ID'),
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const [quiz, questions] = await Promise.all([
+        getQuiz(client, courseId, args.quiz_id),
+        listQuizQuestions(client, courseId, args.quiz_id),
+      ])
+      return toJson({
+        quiz,
+        questions: questions.map(q => ({
+          id: q.id,
+          position: q.position,
+          question_name: q.question_name,
+          question_text: q.question_text,
+          question_type: q.question_type,
+          points_possible: q.points_possible,
+        })),
+      })
+    }
+  )
+
   // ── update_module ────────────────────────────────────────────────────────────
 
   server.registerTool(
@@ -448,6 +592,43 @@ export function registerContentTools(
     }
   )
 
+  // ── list_module_items ────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_module_items',
+    {
+      description: 'List all items in a module with their positions, types, and IDs.',
+      inputSchema: z.object({
+        module_id: z.number().int().positive()
+          .describe('Canvas module ID'),
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const items = await listModuleItems(client, courseId, args.module_id)
+      return toJson(items.map((item: CanvasModuleItem) => ({
+        id: item.id,
+        module_id: item.module_id,
+        position: item.position,
+        type: item.type,
+        title: item.title,
+        indent: item.indent,
+        content_id: item.content_id,
+        page_url: item.page_url,
+        external_url: item.external_url,
+      })))
+    }
+  )
+
   // ── add_module_item ──────────────────────────────────────────────────────────
 
   server.registerTool(
@@ -463,10 +644,14 @@ export function registerContentTools(
           .describe('Item title'),
         content_id: z.number().int().positive().optional()
           .describe('Canvas object ID. Required for Assignment, Quiz, and Page types.'),
+        page_url: z.string().optional()
+          .describe('Page URL slug or numeric ID. Required for type "Page". IDs are more reliable.'),
         external_url: z.string().optional()
           .describe('URL. Required for ExternalUrl type.'),
         position: z.number().int().positive().optional()
           .describe('1-based position in the module. Appends if omitted.'),
+        indent: z.number().int().nonnegative().optional()
+          .describe('Indentation level (0 to 10). Default 0.'),
         new_tab: z.boolean().optional()
           .describe('Open in new tab. Default true for ExternalUrl.'),
         completion_requirement: completionRequirementSchema
@@ -490,6 +675,9 @@ export function registerContentTools(
       ) {
         return toolError(`content_id is required for type "${args.type}".`)
       }
+      if (args.type === 'Page' && !args.page_url) {
+        return toolError('page_url is required for type "Page".')
+      }
       if (args.type === 'ExternalUrl' && !args.external_url) {
         return toolError('external_url is required for type "ExternalUrl".')
       }
@@ -498,8 +686,10 @@ export function registerContentTools(
         type: args.type,
         title: args.title,
         content_id: args.content_id,
+        page_url: args.page_url,
         external_url: args.external_url,
         position: args.position,
+        indent: args.indent,
         new_tab: args.new_tab ?? (args.type === 'ExternalUrl' ? true : undefined),
         completion_requirement: args.completion_requirement,
       })
@@ -511,6 +701,8 @@ export function registerContentTools(
         type: item.type,
         title: item.title,
         content_id: item.content_id,
+        page_url: item.page_url,
+        indent: item.indent,
       })
     }
   )
@@ -528,6 +720,8 @@ export function registerContentTools(
           .describe('Canvas module item ID'),
         title: z.string().optional(),
         position: z.number().int().positive().optional(),
+        indent: z.number().int().nonnegative().optional()
+          .describe('Updated indentation level (0 to 10).'),
         completion_requirement: z.union([
           completionRequirementSchema,
           z.null(),
@@ -549,6 +743,7 @@ export function registerContentTools(
       const item = await updateModuleItem(client, courseId, args.module_id, args.item_id, {
         title: args.title,
         position: args.position,
+        indent: args.indent,
         completion_requirement: args.completion_requirement ?? undefined,
       })
 
@@ -558,6 +753,7 @@ export function registerContentTools(
         position: item.position,
         type: item.type,
         title: item.title,
+        indent: item.indent,
         completion_requirement: item.completion_requirement,
       })
     }
@@ -613,7 +809,7 @@ export function registerContentTools(
       description: 'Update an existing wiki page\'s title, body, or published state.',
       inputSchema: z.object({
         page_url: z.string()
-          .describe('Page URL slug (e.g. "week-2-overview"). Returned by create_page as the "url" field.'),
+          .describe('Page URL slug (e.g. "week-2-overview") or numeric page ID. Numeric IDs are more reliable if titles change.'),
         title: z.string().optional()
           .describe('New page title.'),
         body: z.string().optional()
@@ -682,6 +878,40 @@ export function registerContentTools(
     }
   )
 
+  // ── get_page ──────────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'get_page',
+    {
+      description: 'Retrieve a single wiki page by its URL slug, including full HTML body.',
+      inputSchema: z.object({
+        page_url: z.string()
+          .describe('Page URL slug or numeric ID. Numeric IDs are more reliable if titles change.'),
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const page = await getPage(client, courseId, args.page_url)
+      return toJson({
+        page_id: page.page_id,
+        url: page.url,
+        title: page.title,
+        body: page.body,
+        published: page.published,
+        front_page: page.front_page,
+      })
+    }
+  )
+
   // ── delete_page ───────────────────────────────────────────────────────────────
 
   server.registerTool(
@@ -690,7 +920,7 @@ export function registerContentTools(
       description: 'Permanently delete a wiki page.',
       inputSchema: z.object({
         page_url: z.string()
-          .describe('Page URL slug (e.g. "week-2-overview"). Returned by create_page as the "url" field.'),
+          .describe('Page URL slug (e.g. "week-2-overview") or numeric page ID. Numeric IDs are more reliable if titles change.'),
         course_id: z.number().int().positive().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
@@ -773,6 +1003,37 @@ export function registerContentTools(
     }
   )
 
+  // ── list_discussions ──────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_discussions',
+    {
+      description: 'List all discussion topics in a course (excludes announcements).',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const topics = await listDiscussionTopics(client, courseId)
+      return toJson(topics.map(t => ({
+        id: t.id,
+        title: t.title,
+        message: t.message,
+        published: t.published,
+        assignment_id: t.assignment_id,
+      })))
+    }
+  )
+
   // ── delete_announcement ────────────────────────────────────────────────────
 
   server.registerTool(
@@ -797,6 +1058,37 @@ export function registerContentTools(
 
       await deleteDiscussionTopic(client, courseId, args.topic_id)
       return toJson({ deleted: true, topic_id: args.topic_id })
+    }
+  )
+
+  // ── list_announcements ────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_announcements',
+    {
+      description: 'List all announcements in a course.',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const topics = await listAnnouncements(client, courseId)
+      return toJson(topics.map(t => ({
+        id: t.id,
+        title: t.title,
+        message: t.message,
+        published: t.published,
+        assignment_id: t.assignment_id,
+      })))
     }
   )
 
@@ -1099,6 +1391,60 @@ export function registerContentTools(
         association_type: association.association_type,
         use_for_grading: association.use_for_grading,
       })
+    }
+  )
+
+  // ── list_rubrics ──────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_rubrics',
+    {
+      description: 'List all rubrics in a course with basic metadata. Note: Canvas list endpoint returns title and points only, not full criteria detail.',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const rubrics = await listRubrics(client, courseId)
+      return toJson(rubrics.map(r => ({
+        id: r.id,
+        title: r.title,
+        points_possible: r.points_possible,
+      })))
+    }
+  )
+
+  // ── get_syllabus ──────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'get_syllabus',
+    {
+      description: 'Retrieve the course syllabus body HTML.',
+      inputSchema: z.object({
+        course_id: z.number().int().positive().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
+    },
+    async (args) => {
+      const config = configManager.read()
+      let courseId: number
+      try {
+        courseId = resolveCourseId(config, args.course_id)
+      } catch (err) {
+        return toolError((err as Error).message)
+      }
+
+      const syllabusBody = await getSyllabus(client, courseId)
+      return toJson({ syllabus_body: syllabusBody })
     }
   )
 }

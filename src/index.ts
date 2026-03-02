@@ -8,6 +8,7 @@ import { registerReportingTools } from './tools/reporting.js'
 import { registerContentTools } from './tools/content.js'
 import { registerModuleTools } from './tools/modules.js'
 import { registerResetTools } from './tools/reset.js'
+import { registerFindTools } from './tools/find.js'
 
 async function main() {
   const secureStore = new SecureStore()
@@ -27,6 +28,7 @@ async function main() {
   registerContentTools(server, client, configManager)
   registerModuleTools(server, client, configManager)
   registerResetTools(server, client, configManager)
+  registerFindTools(server, client, configManager)
   await server.connect(new StdioServerTransport())
 }
 
