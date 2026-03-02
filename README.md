@@ -6,7 +6,7 @@ A teacher-facing [Model Context Protocol (MCP)](https://modelcontextprotocol.io)
 
 ## What it does
 
-Connect this server to Claude Desktop and ask it to:
+Connect this server to an AI assistant (like Claude Desktop) and ask it to:
 
 - Switch between your courses (`"switch to my algorithms course"`)
 - List your courses and see which one is active
@@ -24,7 +24,7 @@ Connect this server to Claude Desktop and ask it to:
 - Git ([git-scm.com](https://git-scm.com))
 - A Canvas LMS account with teacher-level access to at least one course
 - A Canvas API token (Profile → Settings → New Access Token)
-- Claude Desktop ([claude.ai/download](https://claude.ai/download))
+- An MCP-compatible AI assistant: [Claude Code](https://code.claude.com), [Gemini CLI](https://geminicli.com/), [Codex (ChatGPT)](https://openai.com/codex/), [Claude Desktop](https://claude.com/download), etc.
 
 ## Step-by-step setup (first time)
 
@@ -112,7 +112,46 @@ Replace `yourschool.instructure.com` with your school's Canvas domain and `YOUR_
 
 **`program.activeCourseId`** and **`program.courseCache`** are managed automatically by `set_active_course` — do not hand-edit them.
 
-### 7. Connect to Claude Desktop
+### 7. Connect to your AI Assistant
+
+The server works with any MCP-compatible AI client. Choose your preferred assistant for setup instructions:
+
+- **[Claude Desktop](#claude-desktop)** (macOS)
+- **[Claude Code](#claude-code-the-claude-cli)** (CLI)
+- **[Gemini CLI](#gemini-cli-googles-gemini-cli)** (CLI)
+- **[Codex CLI](#codex-cli-openais-codex-cli)** (CLI)
+
+### 8. Start using it
+
+In your assistant's chat window, try:
+
+> "List my Canvas courses"
+
+The assistant will call `list_courses` and show your courses. Then set the active course:
+
+> "Switch to my ENG101 course"
+
+---
+
+## Configuration reference
+
+The server reads `~/.config/mcp/canvas-teacher-mcp/config.json` on startup by default. The setup instructions in step 6 above use this default path.
+
+### Using a custom config location
+
+If you need to store the config file somewhere other than the default — for example, to maintain separate configs for different schools or environments — you can point the server at any path using the `--config` flag in the server `args`:
+
+```json
+"args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js", "--config", "/your/custom/path/config.json"]
+```
+
+If you use a custom location, replace `~/.config/mcp/canvas-teacher-mcp` with your chosen directory path everywhere it appears in the setup instructions — including the `mkdir` command in step 6 and the config file path you create there.
+
+## Platform-Specific Setup
+
+The `~/.config/mcp/canvas-teacher-mcp/config.json` file created in step 6 is shared across all clients — you only configure it once.
+
+### Claude Desktop
 
 1. Download and install [Claude Desktop](https://claude.ai/download) if you haven't already
 2. Open Finder (macOS) and press ⌘+Shift+G, then paste:
@@ -136,37 +175,7 @@ Replace `yourschool.instructure.com` with your school's Canvas domain and `YOUR_
 
 If Claude Desktop was already open with other MCP servers configured, merge the `"canvas-teacher-mcp"` entry into your existing `"mcpServers"` object rather than replacing it.
 
-### 8. Start using it
-
-In a Claude Desktop chat, try:
-
-> "List my Canvas courses"
-
-Claude will call `list_courses` and show your courses. Then set the active course:
-
-> "Switch to my ENG101 course"
-
----
-
-## Configuration reference
-
-The server reads `~/.config/mcp/canvas-teacher-mcp/config.json` on startup by default. The setup instructions in step 6 above use this default path.
-
-### Using a custom config location
-
-If you need to store the config file somewhere other than the default — for example, to maintain separate configs for different schools or environments — you can point the server at any path using the `--config` flag in the server `args`:
-
-```json
-"args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js", "--config", "/your/custom/path/config.json"]
-```
-
-If you use a custom location, replace `~/.config/mcp/canvas-teacher-mcp` with your chosen directory path everywhere it appears in the setup instructions — including the `mkdir` command in step 6 and the config file path you create there.
-
-## Other AI assistants
-
-The server works with any MCP-compatible AI client, not just Claude Desktop. The `~/.config/mcp/canvas-teacher-mcp/config.json` file is shared across all clients — you only configure it once.
-
-### Claude Code (the `claude` CLI)
+### Claude Code (Anthropic's `claude` CLI)
 
 Add the server to your user-level MCP config with a single command:
 
@@ -287,11 +296,11 @@ Student names and Canvas IDs in reporting tool responses are automatically repla
 
 ## Privacy / FERPA
 
-Student names and Canvas numeric IDs are FERPA-protected PII. When this server is used with Claude Desktop (cloud-hosted AI), every tool response passes through Anthropic's infrastructure. To prevent student data from leaving your machine, all reporting tools automatically replace student identity information with opaque session tokens before the response reaches the AI:
+Student names and Canvas numeric IDs are FERPA-protected PII. When this server is used with cloud-hosted AI assistants (like Claude Desktop), every tool response passes through the assistant's infrastructure. To prevent student data from leaving your machine, all reporting tools automatically replace student identity information with opaque session tokens before the response reaches the AI:
 
 - `[STUDENT_001]`, `[STUDENT_002]`, … are assigned in the order students are first seen, and reset on every server restart.
 - The AI reasons about tokens only — it never sees real names or Canvas IDs.
-- A human-readable lookup table (`[STUDENT_001] → Jane Smith`) is shown **to you** in the Claude Desktop UI alongside the AI's response, so you always know who's who without needing to ask.
+- A human-readable lookup table (`[STUDENT_001] → Jane Smith`) is shown **to you** in the assistant's UI alongside the AI's response, so you always know who's who without needing to ask.
 - To explicitly look up a token, call `student_pii(action='resolve', student_token='[STUDENT_001]')` — the result is shown to you only, not added to the AI's context.
 - Blinding is always on and cannot be disabled.
 
@@ -300,7 +309,7 @@ The session key used to protect the in-memory token map is:
 - Pinned in RAM via `mlock` where the OS permits (prevents swap-file exposure)
 - Zeroed on process exit (`SIGINT`, `SIGTERM`, `SIGHUP`)
 
-The `--secure-heap=65536` flag in the Claude Desktop config allocates a locked memory region for cryptographic operation intermediates. Include it in your config as shown in the [setup guide](#7-connect-to-claude-desktop).
+The `--secure-heap=65536` flag in the AI assistant config allocates a locked memory region for cryptographic operation intermediates. Include it in your config as shown in the [Platform-Specific Setup](#platform-specific-setup).
 
 ---
 
