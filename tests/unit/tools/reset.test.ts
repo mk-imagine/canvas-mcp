@@ -359,6 +359,111 @@ describe('reset_course — with confirmation_token', () => {
     expect(text).toContain('expired')
   })
 
+  it('rejects token issued for a different course', async () => {
+    registerPreviewHandlers()
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+
+    const token = await getTokenFromDryRun(mcpClient)
+
+    const text = getText(
+      await mcpClient.callTool({
+        name: 'reset_course',
+        arguments: { confirmation_token: token, course_id: 999 },
+      })
+    )
+
+    expect(text).toContain('different course')
+  })
+
+  it('handles rubric deletion failure with temp assignment cleanup', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+
+    const token = await getTokenFromDryRun(mcpClient)
+
+    let tempAssignmentCreated = false
+    let associationCreated = false
+    let tempAssignmentDeleted = false
+
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () => HttpResponse.json(MOCK_COURSE)),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/discussion_topics`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/files`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubrics`, () => HttpResponse.json([{ id: 2001 }])),
+      // First delete attempt fails
+      http.delete(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubrics/2001`, () => {
+        if (!associationCreated) return new HttpResponse(null, { status: 500 })
+        return new HttpResponse(null, { status: 204 })
+      }),
+      // Cleanup flow
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => {
+        tempAssignmentCreated = true
+        return HttpResponse.json({ id: 9999 })
+      }),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubric_associations`, () => {
+        associationCreated = true
+        return HttpResponse.json({ id: 888 })
+      }),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/9999`, () => {
+        return HttpResponse.json({ id: 9999, name: 'temp' })
+      }),
+      http.delete(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments/9999`, () => {
+        tempAssignmentDeleted = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignment_groups`, () => HttpResponse.json([])),
+      http.put(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () => HttpResponse.json(MOCK_COURSE)),
+    )
+
+    const data = parseResult(await mcpClient.callTool({
+      name: 'reset_course',
+      arguments: { confirmation_token: token }
+    }))
+
+    expect(data.deleted.rubrics).toBe(1)
+    expect(tempAssignmentCreated).toBe(true)
+    expect(associationCreated).toBe(true)
+    expect(tempAssignmentDeleted).toBe(true)
+  })
+
+  it('reports failed rubrics in warning when cleanup also fails', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+
+    const token = await getTokenFromDryRun(mcpClient)
+
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () => HttpResponse.json(MOCK_COURSE)),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/discussion_topics`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/files`, () => HttpResponse.json([])),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubrics`, () => HttpResponse.json([{ id: 3001 }])),
+      http.delete(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/rubrics/3001`, () => new HttpResponse(null, { status: 500 })),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => new HttpResponse(null, { status: 500 })),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignment_groups`, () => HttpResponse.json([])),
+      http.put(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}`, () => HttpResponse.json(MOCK_COURSE)),
+    )
+
+    const data = parseResult(await mcpClient.callTool({
+      name: 'reset_course',
+      arguments: { confirmation_token: token }
+    }))
+
+    expect(data.deleted.rubrics).toBe(0)
+    expect(data.warning).toContain('could not delete them: [3001]')
+  })
+
   it('deletes all content when a valid token from dry_run is supplied', async () => {
     const trackers = {
       deletedModules: [] as number[],

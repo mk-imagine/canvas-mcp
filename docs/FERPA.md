@@ -23,5 +23,5 @@ By blinding PII before it leaves the local environment:
 
 ## Best Practices for Instructors
 - **Session Disposal:** The blinding map is cleared when the server restarts or the session ends.
-- **Verification:** Always use the `resolve_student` tool to confirm a student's identity locally before taking action based on AI-generated insights.
+- **Verification:** Always use `student_pii(action='resolve', student_token='[STUDENT_NNN]')` to confirm a student's identity locally before taking action based on AI-generated insights.
 - **Minimal Exposure:** Only use the tools necessary for the specific task to minimize the amount of data processed.

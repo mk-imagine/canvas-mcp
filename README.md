@@ -334,8 +334,17 @@ During `reset_course`, the rubric cleanup step (step 8) handles any pre-existing
 # Unit tests (no credentials required)
 npm test
 
+# Unit tests with watch mode
+npm run test:watch
+
+# Unit tests with coverage report
+npm run test:coverage
+
 # Integration tests (requires .env.test — see below)
 npm run test:integration
+
+# Combined coverage report (Unit + Integration)
+npm run test:coverage:all
 ```
 
 Unit tests mock all HTTP with [msw](https://mswjs.io/). Integration tests run against a real Canvas instance.
@@ -390,23 +399,6 @@ src/
     ├── reset.ts          # reset_course (dry_run + confirmation gate)
     └── find.ts           # create_item, list_items, find_item, update_item, delete_item, search_course
 tests/
-├── unit/                 # Vitest + msw, no credentials required (161 tests)
+├── unit/                 # Vitest + msw, no credentials required (229 tests)
 └── integration/          # Real Canvas API, requires .env.test (88 tests)
 ```
-
-## Roadmap
-
-| Phase | Status | Contents |
-|---|---|---|
-| 1 — Foundation | Complete | `list_courses`, `set_active_course`, `get_active_course`, Canvas client, config manager |
-| 2 — Reporting | Complete | `list_modules`, `get_module_summary`, grade summaries, missing/late assignment reports |
-| 3 — Low-level creation | Complete | `create_assignment`, `create_quiz`, module item CRUD, Handlebars description templates |
-| 4 — High-level creation | Complete | `create_lesson_module`, `create_solution_module`, `clone_module`, template system |
-| 5 — Destructive ops | Complete | `preview_course_reset`, `reset_course` with confirmation gate |
-| 5b — Complete reset | Complete | Full content sweep: discussions, announcements, files, rubrics, assignment groups, syllabus |
-| 5b+ — Creation tools | Complete | `create_discussion`, `create_announcement`, `upload_file`, `create_rubric`, `associate_rubric`, `update_syllabus`; rubric zombie recovery in `reset_course` |
-| 6 — FERPA PII blinding | Complete | Always-on blinding of student names/IDs in all reporting tools; session tokens; `resolve_student`, `list_blinded_students` |
-| 7 — Content retrieval | Complete | `get_page`, `list_assignments`, `get_assignment`, `list_quizzes`, `get_quiz`, `list_discussions`, `list_announcements`, `list_rubrics`, `get_syllabus` |
-| 8 — Smart find & mutate | Complete | `find_item`, `update_item`, `delete_item` (name-based lookup for all content types); `get_module_summary` extended with `module_name` param |
-| 9 — Canvas Smart Search | Complete | `search_course` (semantic search via Canvas beta API, configurable distance threshold), `set_smart_search_threshold`, `config.smartSearch.distanceThreshold` |
-| 10 — Tool interface refactor | Complete | Consolidated ~58 tools into 18 via discriminated unions: `create_item` (7 types), `list_items` (9 types), `build_module` (3 templates), `get_grades` (3 scopes), `get_submission_status` (2 types), `student_pii` (2 actions); merged `preview_course_reset` into `reset_course(dry_run)`; merged syllabus into `find_item`/`update_item`; merged `set_smart_search_threshold` into `search_course(save_threshold)` |

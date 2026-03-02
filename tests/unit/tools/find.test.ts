@@ -1180,6 +1180,106 @@ describe('create_item — dry_run=true', () => {
     expect(data.dry_run).toBe(true)
     expect(data.preview.description).toContain('colab.example.com/nb')
   })
+
+  it('returns preview for type=quiz with exit card template', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeFindClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'create_item',
+        arguments: {
+          type: 'quiz',
+          use_exit_card_template: true,
+          week: 1,
+          dry_run: true,
+        },
+      })
+    )
+    expect(data.dry_run).toBe(true)
+    expect(data.preview.title).toContain('Week 1')
+  })
+
+  it('returns preview for type=discussion', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeFindClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'create_item',
+        arguments: { type: 'discussion', title: 'D1', dry_run: true },
+      })
+    )
+    expect(data.dry_run).toBe(true)
+    expect(data.preview.title).toBe('D1')
+  })
+
+  it('returns preview for type=announcement', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeFindClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'create_item',
+        arguments: { type: 'announcement', title: 'A1', dry_run: true },
+      })
+    )
+    expect(data.dry_run).toBe(true)
+    expect(data.preview.title).toBe('A1')
+  })
+
+  it('returns preview for type=module', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeFindClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'create_item',
+        arguments: { type: 'module', name: 'M1', dry_run: true },
+      })
+    )
+    expect(data.dry_run).toBe(true)
+    expect(data.preview.name).toBe('M1')
+  })
+
+  it('returns preview for type=module_item', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () =>
+        HttpResponse.json([MOCK_CREATED_MODULE])
+      ),
+    )
+    const { mcpClient } = await makeFindClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'create_item',
+        arguments: {
+          type: 'module_item',
+          module_name: 'Week 1',
+          item_type: 'SubHeader',
+          title: 'H1',
+          dry_run: true,
+        },
+      })
+    )
+    expect(data.dry_run).toBe(true)
+    expect(data.preview.module_id).toBe(10)
+  })
+})
+
+describe('create_item — errors', () => {
+  it('returns error when title missing for quiz without template', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeFindClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'create_item',
+      arguments: { type: 'quiz' },
+    })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('title is required')
+  })
 })
 
 describe('create_item — type=page', () => {

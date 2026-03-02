@@ -249,6 +249,69 @@ describe('build_module — template="lesson"', () => {
     expect(data.items_created.length).toBe(6)
   })
 
+  it('earlier-standard creates reminders and video pages', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+
+    mswServer.use(
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () => HttpResponse.json(makeModule({ id: 11 }))),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages`, () => HttpResponse.json(makePage())),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => HttpResponse.json(makeAssignment())),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () => HttpResponse.json(makeQuiz({ id: 601 }))),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes/601/questions`, () => HttpResponse.json(makeQuizQuestion())),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules/11/items`, () => HttpResponse.json(makeModuleItem()))
+    )
+
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'build_module',
+        arguments: {
+          template: 'lesson',
+          week: 1,
+          title: 'Startup',
+          lesson_template: 'earlier-standard',
+          due_date: '2026-01-01T00:00:00Z',
+          items: [
+            { type: 'assignment', verb: 'Read', description: 'Docs' },
+            { type: 'video_page', title: 'Intro', mins: 5 }
+          ],
+        },
+      })
+    )
+    expect(data.items_created.length).toBeGreaterThan(5)
+  })
+
+  it('handles item creation failure gracefully', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+
+    mswServer.use(
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () => HttpResponse.json(makeModule({ id: 12 }))),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages`, () => HttpResponse.json(makePage())),
+      // Fail the second item (Assignment)
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => new HttpResponse(null, { status: 500 })),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules/12/items`, () => HttpResponse.json(makeModuleItem()))
+    )
+
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'build_module',
+        arguments: {
+          template: 'lesson',
+          week: 1,
+          title: 'Fail Test',
+          lesson_template: 'later-standard',
+          due_date: '2026-01-01T00:00:00Z',
+          items: [{ type: 'coding_assignment', title: 'Lab', hours: 1 }],
+        },
+      })
+    )
+    expect(data.error).toBeDefined()
+    expect(data.completed_before_failure.length).toBeGreaterThan(0)
+  })
+
   it('returns toolError when no active course is set', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath, { program: { activeCourseId: null, courseCodes: [], courseCache: {} } })
@@ -448,6 +511,69 @@ describe('build_module — template="clone"', () => {
     }
     const pageItem = data.items_created.find((i: { type: string }) => i.type === 'Page')
     expect(pageItem?.title).toContain('Week 5')
+  })
+
+  it('clones quiz and external_url items', async () => {
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${SOURCE_COURSE_ID}/modules/${SOURCE_MODULE_ID}/items`, () =>
+        HttpResponse.json([
+          makeModuleItem({ id: 1004, type: 'Quiz', title: 'Old Quiz', content_id: 601 }),
+          makeModuleItem({ id: 1005, type: 'ExternalUrl', title: 'Old Link', external_url: 'https://old.com' }),
+        ])
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${SOURCE_COURSE_ID}/quizzes/601`, () =>
+        HttpResponse.json(makeQuiz({ id: 601, title: 'Old Quiz' }))
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${SOURCE_COURSE_ID}/quizzes/601/questions`, () =>
+        HttpResponse.json([makeQuizQuestion()])
+      ),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () =>
+        HttpResponse.json(makeQuiz({ id: 602 }), { status: 201 })
+      ),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes/602/questions`, () =>
+        HttpResponse.json(makeQuizQuestion(), { status: 201 })
+      ),
+      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules/50/items`, () =>
+        HttpResponse.json(makeModuleItem({ id: 2005 }), { status: 201 })
+      )
+    )
+
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'build_module',
+        arguments: {
+          template: 'clone',
+          source_module_id: SOURCE_MODULE_ID,
+          source_course_id: SOURCE_COURSE_ID,
+        },
+      })
+    )
+    expect(data.items_created.length).toBe(2)
+  })
+
+  it('returns error when source module not found', async () => {
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${SOURCE_COURSE_ID}/modules/${SOURCE_MODULE_ID}`, () =>
+        new HttpResponse(null, { status: 404 })
+      )
+    )
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+
+    const result = await mcpClient.callTool({
+      name: 'build_module',
+      arguments: {
+        template: 'clone',
+        source_module_id: SOURCE_MODULE_ID,
+        source_course_id: SOURCE_COURSE_ID,
+      },
+    })
+    expect(getText(result)).toContain('not found')
   })
 
   it('returns toolError when no active course is set', async () => {

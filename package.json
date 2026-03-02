@@ -12,10 +12,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run --config vitest.config.ts",
-    "test:watch": "vitest --config vitest.config.ts",
-    "test:integration": "vitest run --config vitest.integration.ts",
-    "test:coverage": "vitest run --coverage --config vitest.config.ts",
+    "test": "node --no-warnings node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "test:watch": "node --no-warnings node_modules/vitest/vitest.mjs --config vitest.config.ts",
+    "test:integration": "node --no-warnings node_modules/vitest/vitest.mjs run --config vitest.integration.ts",
+    "test:integration:coverage": "node --no-warnings node_modules/vitest/vitest.mjs run --coverage --config vitest.integration.ts",
+    "test:coverage": "node --no-warnings node_modules/vitest/vitest.mjs run --coverage --config vitest.config.ts",
+    "test:coverage:all": "rm -rf coverage && npm run test:coverage && npm run test:integration:coverage && istanbul-merge --out coverage/merged.json coverage/unit/coverage-final.json coverage/integration/coverage-final.json && nyc report --reporter=text --reporter=html --temp-dir=coverage --report-dir=coverage/merged",
     "seed": "tsx scripts/seed-test-data.ts",
     "start": "node dist/index.js"
   },
@@ -23,7 +25,9 @@
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^2.0.0",
     "dotenv": "^16.0.0",
+    "istanbul-merge": "^2.0.0",
     "msw": "^2.0.0",
+    "nyc": "^18.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0"

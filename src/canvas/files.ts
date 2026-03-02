@@ -90,6 +90,7 @@ export async function uploadFile(
   const step2Response = await fetch(step1.upload_url, {
     method: 'POST',
     body: formData,
+    redirect: 'manual',
   })
 
   // Step 3: If redirect (301/303), follow with auth; otherwise parse directly

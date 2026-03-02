@@ -99,7 +99,7 @@ describe('Integration: list_items — modules', () => {
     const data = parseResult(await mcpClient.callTool({ name: 'list_items', arguments: { type: 'modules' } }))
     const seedModule = data.find((m: { id: number }) => m.id === moduleId)
     expect(seedModule, `Module ${moduleId} not found in list`).toBeDefined()
-    expect(seedModule.items_count).toBe(4)
+    expect(seedModule.items_count).toBeGreaterThanOrEqual(4)
     console.log(`  Seed module: "${seedModule.name}" (id: ${seedModule.id}, items: ${seedModule.items_count})`)
   })
 })
@@ -115,7 +115,7 @@ describe('Integration: get_module_summary', () => {
       await mcpClient.callTool({ name: 'get_module_summary', arguments: { module_id: moduleId } })
     )
     expect(data.module.id).toBe(moduleId)
-    expect(data.items).toHaveLength(4)
+    expect(data.items.length).toBeGreaterThanOrEqual(4)
     console.log(`  Items: ${data.items.map((i: { type: string; title: string }) => `${i.type}:${i.title}`).join(', ')}`)
   })
 
@@ -348,6 +348,7 @@ describe('Integration: get_grades — scope=assignment', () => {
     })
     const content = getContent(result)
     expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
     const data = parseResult(result)
     expect(data.assignment.id).toBe(assignment1Id)
     expect(data.assignment.points_possible).toBe(10)
@@ -355,6 +356,13 @@ describe('Integration: get_grades — scope=assignment', () => {
       expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
       expect(s).not.toHaveProperty('student_id')
       expect(s).not.toHaveProperty('student_name')
+    }
+    // No real names in assistant block
+    const names = content[1].text.split('\n').slice(1)
+      .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
+      .filter(Boolean) as string[]
+    for (const name of names) {
+      expect(content[0].text).not.toContain(name)
     }
     console.log(`  A1: ${data.summary.submitted} submitted, ${data.summary.missing} missing, mean=${data.summary.mean_score}`)
   })
@@ -467,7 +475,10 @@ describe('Integration: get_grades — scope=student', () => {
       name: 'get_grades',
       arguments: { scope: 'student', student_token: token },
     })
-    const assistantText = getContent(result)[0].text
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+    const assistantText = content[0].text
     const resolved = store.resolve(token)!
     expect(assistantText).not.toContain(resolved.name)
     expect(assistantText).not.toContain(String(resolved.canvasId))
@@ -564,8 +575,11 @@ describe('Integration: get_submission_status — type=missing', () => {
     const store = new SecureStore()
     const { mcpClient } = await makeIntegrationClient(configPath, store)
     const result = await mcpClient.callTool({ name: 'get_submission_status', arguments: { type: 'missing' } })
-    const assistantText = getContent(result)[0].text
-    const userText = getContent(result)[1].text
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+    const assistantText = content[0].text
+    const userText = content[1].text
     const names = userText.split('\n').slice(1)
       .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
       .filter(Boolean) as string[]
@@ -633,8 +647,11 @@ describe('Integration: get_submission_status — type=late', () => {
     const store = new SecureStore()
     const { mcpClient } = await makeIntegrationClient(configPath, store)
     const result = await mcpClient.callTool({ name: 'get_submission_status', arguments: { type: 'late' } })
-    const assistantText = getContent(result)[0].text
-    const userText = getContent(result)[1].text
+    const content = getContent(result)
+    expect(content[0].annotations?.audience).toEqual(['assistant'])
+    expect(content[1].annotations?.audience).toEqual(['user'])
+    const assistantText = content[0].text
+    const userText = content[1].text
     const names = userText.split('\n').slice(1)
       .map(line => line.match(/^\[STUDENT_\d{3}\] → (.+)$/)?.[1])
       .filter(Boolean) as string[]

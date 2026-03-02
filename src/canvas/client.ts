@@ -29,10 +29,6 @@ export class CanvasClient {
     }
   }
 
-  get instanceUrl(): string {
-    return this.baseUrl
-  }
-
   get authHeaders(): Record<string, string> {
     return { ...this.headers }
   }
@@ -85,16 +81,6 @@ export class CanvasClient {
       // ignore JSON parse errors
     }
     throw new CanvasApiError(response.status, canvasMessage)
-  }
-
-  private async checkResponse(response: Response, acceptStatuses: number[]): Promise<Response> {
-    if (!acceptStatuses.includes(response.status) && response.ok === false) {
-      await this.throwCanvasError(response)
-    }
-    if (!acceptStatuses.includes(response.status) && !response.ok) {
-      await this.throwCanvasError(response)
-    }
-    return response
   }
 
   private buildArrayParamUrl(path: string, params: Record<string, string | string[]>): string {

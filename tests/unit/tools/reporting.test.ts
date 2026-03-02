@@ -256,12 +256,19 @@ describe('get_grades — scope=class', () => {
       name: 'get_grades',
       arguments: { scope: 'class' },
     })
+    const blocks = getContent(result)
+    // Audience annotations
+    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[1].annotations?.audience).toContain('user')
+    // Assistant block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.student_count).toBe(2)
     expect(data.students[0].student).toMatch(/\[STUDENT_\d{3}\]/)
     expect(data.students[0].current_score).toBeDefined()
     expect(data.students[0].missing_count).toBeDefined()
-    // Lookup table has real names
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    expect(blocks[0].text).not.toContain('Bob Adams')
+    // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Jane Smith')
     expect(userText).toContain('Bob Adams')
@@ -281,6 +288,56 @@ describe('get_grades — scope=class', () => {
     const userText = getUserText(result)
     const bobToken = getStudentToken(userText, 'Bob Adams')
     expect(data.students[0].student).toBe(bobToken)
+  })
+
+  it('sorts by grade (score ASC)', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const store = new SecureStore()
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'class', sort_by: 'grade' },
+    })
+    const data = parseBlindedResult(result)
+    // Bob has 60, Jane has 87.4 -> Bob first
+    const userText = getUserText(result)
+    const bobToken = getStudentToken(userText, 'Bob Adams')
+    expect(data.students[0].student).toBe(bobToken)
+  })
+
+  it('sorts by zeros (zeros DESC)', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    // Add a submission with score 0 for Jane
+    const janeZero = { ...MOCK_SUBMISSIONS[0], score: 0 }
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json([janeZero, MOCK_SUBMISSIONS[1], MOCK_SUBMISSIONS[2]])
+      )
+    )
+    const store = new SecureStore()
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'class', sort_by: 'zeros' },
+    })
+    const data = parseBlindedResult(result)
+    // Jane has 1 zero, Bob has 0 -> Jane first
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane Smith')
+    expect(data.students[0].student).toBe(janeToken)
+  })
+
+  it('filters by assignment_group_id', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseBlindedResult(await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'class', assignment_group_id: 999 }, // No subs in this group
+    }))
+    expect(data.students[0].missing_count).toBe(0)
   })
 
   it('returns error when no active course is set', async () => {
@@ -316,12 +373,20 @@ describe('get_grades — scope=assignment', () => {
       name: 'get_grades',
       arguments: { scope: 'assignment', assignment_id: 501 },
     })
+    const blocks = getContent(result)
+    // Audience annotations
+    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[1].annotations?.audience).toContain('user')
+    // Assistant block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.assignment.id).toBe(501)
     expect(data.submissions).toHaveLength(2)
     expect(data.submissions[0].student).toMatch(/\[STUDENT_\d{3}\]/)
     expect(data.summary.total_students).toBe(2)
     expect(data.summary.missing).toBe(1)
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    expect(blocks[0].text).not.toContain('Bob Adams')
+    // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Jane Smith')
   })
@@ -353,10 +418,19 @@ describe('get_grades — scope=student', () => {
       name: 'get_grades',
       arguments: { scope: 'student', student_token: janeToken },
     })
+    const blocks = getContent(result)
+    // Audience annotations
+    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[1].annotations?.audience).toContain('user')
+    // Assistant block: no real names
     const data = parseBlindedResult(result)
     expect(data.student_token).toBe(janeToken)
     expect(data.current_score).toBe(87.4)
     expect(data.assignments.length).toBeGreaterThan(0)
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    // User block: lookup table present
+    const userText = getUserText(result)
+    expect(userText).toContain('Jane Smith')
   })
 
   it('returns error for unknown token', async () => {
@@ -392,11 +466,19 @@ describe('get_submission_status — type=missing', () => {
       name: 'get_submission_status',
       arguments: { type: 'missing' },
     })
+    const blocks = getContent(result)
+    // Audience annotations
+    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[1].annotations?.audience).toContain('user')
+    // Assistant block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_missing_submissions).toBe(1)
     expect(data.students).toHaveLength(1)
     expect(data.students[0].student).toMatch(/\[STUDENT_\d{3}\]/)
     expect(data.students[0].missing_count).toBe(1)
+    expect(blocks[0].text).not.toContain('Bob Adams')
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Bob Adams')
   })
@@ -430,10 +512,19 @@ describe('get_submission_status — type=late', () => {
       name: 'get_submission_status',
       arguments: { type: 'late' },
     })
+    const blocks = getContent(result)
+    // Audience annotations
+    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[1].annotations?.audience).toContain('user')
+    // Assistant block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_late_submissions).toBe(1)
     expect(data.students).toHaveLength(1)
+    expect(data.students[0].student).toMatch(/\[STUDENT_\d{3}\]/)
     expect(data.students[0].late_count).toBe(1)
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    expect(blocks[0].text).not.toContain('Bob Adams')
+    // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Jane Smith')
   })
@@ -547,6 +638,28 @@ describe('get_module_summary — module_name', () => {
     expect(data.module.id).toBe(10)
     expect(data.module.name).toBe('Week 1: Introduction')
     expect(data.items).toHaveLength(1)
+  })
+
+  it('returns warning when multiple modules match name', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () =>
+        HttpResponse.json([
+          MOCK_MODULE,
+          { ...MOCK_MODULE, id: 11, name: 'Week 1: Advanced' }
+        ])
+      )
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const data = parseResult(
+      await mcpClient.callTool({
+        name: 'get_module_summary',
+        arguments: { module_name: 'Week 1' },
+      })
+    )
+    expect(data.warning).toContain('2 modules matched')
+    expect(data.module.id).toBe(10)
   })
 
   it('returns toolError when neither module_id nor module_name is provided', async () => {
