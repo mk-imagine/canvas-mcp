@@ -8,7 +8,7 @@ Generalize the MCP server by moving program-specific scaffolding logic out of th
 ## 1. Template Storage
 Templates reside in the user's configuration directory to ensure they survive server updates and contain no secrets.
 
-**Path:** `~/.config/mcp/canvas-teacher-mcp/templates/`
+**Path:** `~/.config/mcp/canvas-mcp/templates/`
 
 ### Folder Structure
 Each template is a self-contained directory:

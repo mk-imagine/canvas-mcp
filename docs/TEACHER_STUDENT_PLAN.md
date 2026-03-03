@@ -49,7 +49,7 @@ Instead of a runtime switch, use separate entry points to ensure the LLM never s
 ### Option 2: Separate Repositories (Shared Package)
 **Structure:**
 - `canvas-client-core`: A private or public NPM package containing the API client.
-- `canvas-teacher-mcp`: Consumes the core; implements teacher tools.
+- `canvas-mcp`: Consumes the core; implements teacher tools.
 - `canvas-student-mcp`: Consumes the core; implements student tools.
 - **Pros:** Maximum security isolation. Clear boundaries. Different release cycles (e.g., a teacher-mode bug doesn't require a student-mode update).
 - **Cons:** Overhead of managing multiple repositories and publishing/linking the shared package during development.

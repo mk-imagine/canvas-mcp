@@ -1,10 +1,10 @@
 # Security Implementation Details
 
 ## Overview
-`canvas-teacher-mcp` is designed to be a high-security bridge between your Canvas LMS data and an AI assistant. To ensure student privacy and data integrity, several low-level security features are implemented.
+`canvas-mcp` is designed to be a high-security bridge between your Canvas LMS data and an AI assistant. To ensure student privacy and data integrity, several low-level security features are implemented.
 
 ## Secure Store Architecture
-The `SecureStore` (found in `src/security/secure-store.ts`) is responsible for PII blinding and managing student identity tokens.
+The `SecureStore` (found in `packages/core/src/security/secure-store.ts`) is responsible for PII blinding and managing student identity tokens.
 
 ### In-Memory Encryption
 - **AES-256-GCM:** Each PII entry (Canvas ID and student name) is encrypted using AES-256-GCM before being stored in a local `Map`.
@@ -19,7 +19,7 @@ To prevent the session encryption key from being swapped to disk (where it could
 
 ### Secure Heap Protection
 For maximum security, the server should be run with the `--secure-heap` flag. This flag (available in modern Node.js) instructs OpenSSL to use a dedicated, protected memory region for its internal cryptographic buffers.
-- **Recommended Usage:** `node --secure-heap=65536 dist/index.js`
+- **Recommended Usage:** `node --secure-heap=65536 packages/teacher/dist/index.js`
 
 ### Anti-Core Dump
 To prevent student PII or encryption keys from appearing in a core dump (created if the process crashes), users are encouraged to set OS-level limits:

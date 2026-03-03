@@ -1,6 +1,6 @@
-# Canvas API Implementation Analysis: `canvas-teacher-mcp`
+# Canvas API Implementation Analysis: `canvas-mcp`
 
-This document provides a comprehensive analysis of the Canvas API endpoints currently implemented in the `canvas-teacher-mcp` project versus the full Canvas LMS API.
+This document provides a comprehensive analysis of the Canvas API endpoints currently implemented in the `canvas-mcp` project versus the full Canvas LMS API.
 
 ## Executive Summary
 

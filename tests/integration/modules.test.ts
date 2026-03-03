@@ -80,7 +80,7 @@ afterAll(async () => {
   if (createdModuleIds.length === 0) return
   const configPath = makeTmpConfigPath()
   makeConfig(configPath)
-  const { deleteModule } = await import('../../src/canvas/modules.js')
+  const { deleteModule } = await import('@canvas-mcp/core')
   const canvasClient = new CanvasClient({ instanceUrl, apiToken })
   for (const id of createdModuleIds) {
     try {

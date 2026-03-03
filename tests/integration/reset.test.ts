@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -218,7 +218,7 @@ describe('reset_course', () => {
     const { mcpClient } = await makeClient(configPath)
 
     // Explicitly create a front page so the reset exercises the auto-unset code path
-    const { createPage, updatePage } = await import('../../src/canvas/pages.js')
+    const { createPage, updatePage } = await import('@canvas-mcp/core')
     const canvasClient = new CanvasClient({ instanceUrl, apiToken })
     const frontPage = await createPage(canvasClient, testCourseId, {
       title: '[MCP TEST] Front Page for Reset',
@@ -279,4 +279,65 @@ describe('reset_course', () => {
     expect(postPreview.would_delete.rubrics).toBe(zombieRubrics.length)
     // assignment_groups may be 1 — Canvas keeps at least one group
   })
+})
+
+describe('reset_course coverage gaps', () => {
+    it('rejects a token for a different course', async () => {
+        const configPath = makeTmpConfigPath()
+        makeConfig(configPath)
+        const { mcpClient } = await makeClient(configPath)
+
+        // Get a token for the real test course
+        const preview = parseResult(
+            await mcpClient.callTool({ name: 'reset_course', arguments: { dry_run: true } })
+        )
+        const validToken = preview.confirmation_token
+
+        // Now, try to use that token with a fake course ID
+        const text = getText(
+            await mcpClient.callTool({
+                name: 'reset_course',
+                arguments: { confirmation_token: validToken, course_id: 12345 },
+            })
+        )
+        expect(text).toContain('Token was issued for a different course')
+    })
+
+    it('rejects an expired token', async () => {
+        vi.useFakeTimers()
+        const configPath = makeTmpConfigPath()
+        makeConfig(configPath)
+        const { mcpClient } = await makeClient(configPath)
+
+        const preview = parseResult(
+            await mcpClient.callTool({ name: 'reset_course', arguments: { dry_run: true } })
+        )
+        const validToken = preview.confirmation_token
+
+        // Manually expire the token by manipulating time (vitest fake timers)
+        vi.advanceTimersByTime(10 * 60 * 1000) // 10 minutes
+
+        const text = getText(
+            await mcpClient.callTool({
+                name: 'reset_course',
+                arguments: { confirmation_token: validToken },
+            })
+        )
+        expect(text).toContain('token has expired')
+
+        vi.useRealTimers()
+    })
+
+    it('rejects wrong confirmation_text', async () => {
+        const configPath = makeTmpConfigPath()
+        makeConfig(configPath)
+        const { mcpClient } = await makeClient(configPath)
+        const text = getText(
+            await mcpClient.callTool({
+                name: 'reset_course',
+                arguments: { confirmation_text: 'Wrong Course Name' },
+            })
+        )
+        expect(text).toContain('does not match course name')
+    })
 })

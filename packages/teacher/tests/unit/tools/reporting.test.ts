@@ -348,6 +348,116 @@ describe('get_grades — scope=class', () => {
   })
 })
 
+// ─── get_grades (scope=class sorting) ─────────────────────────────────────────
+
+describe('get_grades — scope=class sorting', () => {
+  it('sorts by engagement with null scores', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+
+    const enrollmentsWithNulls = [
+      {
+        id: 1, user_id: 1001, type: 'StudentEnrollment', enrollment_state: 'active',
+        user: { id: 1001, name: 'C Jane Smith', sortable_name: 'Smith, C Jane' },
+        grades: { current_score: null, final_score: null, current_grade: null, final_grade: null },
+      },
+      {
+        id: 2, user_id: 1002, type: 'StudentEnrollment', enrollment_state: 'active',
+        user: { id: 1002, name: 'B Bob Adams', sortable_name: 'Adams, B Bob' },
+        grades: { current_score: 60.0, final_score: 50.0, current_grade: 'D', final_grade: 'F' },
+      },
+      {
+        id: 3, user_id: 1003, type: 'StudentEnrollment', enrollment_state: 'active',
+        user: { id: 1003, name: 'A Alice Jones', sortable_name: 'Jones, A Alice' },
+        grades: { current_score: null, final_score: null, current_grade: null, final_grade: null },
+      },
+    ]
+
+    const submissionsForSort = [
+      { id: 201, assignment_id: 501, user_id: 1001, score: 9.0, late: false, missing: false, workflow_state: 'graded', assignment: {}, user: {} },
+      { id: 202, assignment_id: 501, user_id: 1002, score: 6.0, late: false, missing: false, workflow_state: 'graded', assignment: {}, user: {} },
+      { id: 203, assignment_id: 501, user_id: 1003, score: null, late: false, missing: false, workflow_state: 'unsubmitted', assignment: {}, user: {} },
+    ]
+
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+        HttpResponse.json(enrollmentsWithNulls)
+      ),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json(submissionsForSort)
+      ),
+    )
+
+    const store = new SecureStore()
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'class', sort_by: 'engagement' },
+    })
+
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const aliceToken = getStudentToken(userText, 'A Alice Jones')
+    const bobToken = getStudentToken(userText, 'B Bob Adams')
+    const janeToken = getStudentToken(userText, 'C Jane Smith')
+
+    // All have 0 missing, 0 late.
+    // Alice and Jane have null scores, Bob has 60.
+    // With engagement sort, null scores should come first, sorted by name.
+    // So order should be Alice (null), Jane (null), Bob (60)
+    expect(data.students.map((s: any) => s.student)).toEqual([aliceToken, janeToken, bobToken])
+  });
+
+  it('sorts by grade with null scores', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+
+    const enrollmentsWithNulls = [
+        {
+            id: 1, user_id: 1001, type: 'StudentEnrollment', enrollment_state: 'active',
+            user: { id: 1001, name: 'C Jane Smith', sortable_name: 'Smith, C Jane' },
+            grades: { current_score: 80, final_score: null, current_grade: null, final_grade: null },
+        },
+        {
+            id: 2, user_id: 1002, type: 'StudentEnrollment', enrollment_state: 'active',
+            user: { id: 1002, name: 'B Bob Adams', sortable_name: 'Adams, B Bob' },
+            grades: { current_score: 60.0, final_score: 50.0, current_grade: 'D', final_grade: 'F' },
+        },
+        {
+            id: 3, user_id: 1003, type: 'StudentEnrollment', enrollment_state: 'active',
+            user: { id: 1003, name: 'A Alice Jones', sortable_name: 'Jones, A Alice' },
+            grades: { current_score: null, final_score: null, current_grade: null, final_grade: null },
+        },
+    ]
+
+    mswServer.use(
+        http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+            HttpResponse.json(enrollmentsWithNulls)
+        ),
+        http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+            HttpResponse.json([])
+        ),
+    )
+
+    const store = new SecureStore()
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+        name: 'get_grades',
+        arguments: { scope: 'class', sort_by: 'grade' },
+    })
+
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const aliceToken = getStudentToken(userText, 'A Alice Jones')
+    const bobToken = getStudentToken(userText, 'B Bob Adams')
+    const janeToken = getStudentToken(userText, 'C Jane Smith')
+
+    // grade sort is score ASC. nulls first, then by score.
+    // Order should be Alice (null), Bob (60), Jane (80)
+    expect(data.students.map((s: any) => s.student)).toEqual([aliceToken, bobToken, janeToken])
+  })
+})
+
 // ─── get_grades (scope=assignment) ───────────────────────────────────────────
 
 describe('get_grades — scope=assignment', () => {
@@ -442,6 +552,50 @@ describe('get_grades — scope=student', () => {
     const text = getContent(result)[0].text
     expect(text).toContain('Unknown student token')
   })
+
+  it('returns error when student is not in course', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const store = new SecureStore()
+    const janeToken = store.tokenize(1001, 'Jane Smith')
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () => {
+        return HttpResponse.json(MOCK_SUBMISSIONS.filter(s => s.user_id === 1001))
+      }),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+        HttpResponse.json(MOCK_ENROLLMENTS.filter(e => e.user_id !== 1001))
+      ),
+    )
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'student', student_token: janeToken },
+    })
+    const text = getContent(result)[0].text
+    expect(text).toContain('is not enrolled in course')
+  })
+
+  it('returns error on Canvas API error', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const store = new SecureStore()
+    const janeToken = store.tokenize(1001, 'Jane Smith')
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () => {
+        return new HttpResponse(null, { status: 404 })
+      }),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () =>
+        HttpResponse.json(MOCK_ENROLLMENTS)
+      ),
+    )
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'get_grades',
+      arguments: { scope: 'student', student_token: janeToken },
+    })
+    const text = getContent(result)[0].text
+    expect(text).toContain('is not enrolled in course')
+  })
 })
 
 // ─── get_submission_status (type=missing) ─────────────────────────────────────
@@ -479,6 +633,54 @@ describe('get_submission_status — type=missing', () => {
     // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Bob Adams')
+  })
+
+  it('filters missing assignments with since_date', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const missingWithDates = [
+      { ...MOCK_SUBMISSIONS[2], assignment: { ...MOCK_SUBMISSIONS[2].assignment, due_at: '2026-01-15T23:59:00Z' } }, // Bob, will be filtered out
+      { id: 204, assignment_id: 503, user_id: 1001, score: null, submitted_at: null, late: false, missing: true, workflow_state: 'unsubmitted', assignment: { id: 503, name: 'Assignment C', due_at: '2026-02-15T23:59:00Z' }, user: MOCK_ENROLLMENTS[0].user }, // Jane, will be included
+    ]
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+        HttpResponse.json(missingWithDates)
+      ),
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+      name: 'get_submission_status',
+      arguments: { type: 'missing', since_date: '2026-02-01' },
+    })
+    const data = parseBlindedResult(result)
+    expect(data.total_missing_submissions).toBe(1)
+    expect(data.students).toHaveLength(1)
+    const userText = getUserText(result)
+    const janeToken = getStudentToken(userText, 'Jane Smith')
+    expect(data.students[0].student).toBe(janeToken)
+  })
+
+  it('sorts missing assignments with null due dates', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const missingWithNulls = [
+      { ...MOCK_SUBMISSIONS[2], assignment: { ...MOCK_SUBMISSIONS[2].assignment, due_at: null } },
+      { id: 204, assignment_id: 503, user_id: 1002, score: null, submitted_at: null, late: false, missing: true, workflow_state: 'unsubmitted', assignment: { id: 503, name: 'Assignment C', due_at: '2026-02-15T23:59:00Z' }, user: MOCK_ENROLLMENTS[1].user },
+    ]
+    mswServer.use(
+        http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+            HttpResponse.json(missingWithNulls)
+        ),
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+        name: 'get_submission_status',
+        arguments: { type: 'missing' },
+    })
+    const data = parseBlindedResult(result)
+    const student = data.students[0]
+    // The assignment with the null due date should be last in the list
+    expect(student.missing_assignments[1].due_at).toBeNull()
   })
 
   it('returns error when no active course is set', async () => {
@@ -525,6 +727,29 @@ describe('get_submission_status — type=late', () => {
     // User block: real names visible
     const userText = getUserText(result)
     expect(userText).toContain('Jane Smith')
+  })
+
+  it('sorts late assignments with null submitted_at dates', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const lateWithNulls = [
+        { ...MOCK_SUBMISSIONS[1], submitted_at: null }, // This is an impossible state, but good for testing the sort
+        { ...MOCK_SUBMISSIONS[1], id: 205, user_id: 1001, submitted_at: '2026-03-01T10:00:00Z' },
+    ]
+    mswServer.use(
+        http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () =>
+            HttpResponse.json(lateWithNulls)
+        ),
+    )
+    const { mcpClient } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({
+        name: 'get_submission_status',
+        arguments: { type: 'late' },
+    })
+    const data = parseBlindedResult(result)
+    const student = data.students[0]
+    // The submission with the null submitted_at date should be last in the list
+    expect(student.late_assignments[1].submitted_at).toBeNull()
   })
 })
 
@@ -682,5 +907,47 @@ describe('get_module_summary — module_name', () => {
     })
     const text = getContent(result)[0].text
     expect(text).toContain('No module found matching')
+  })
+})
+
+describe('Coverage gaps', () => {
+  it('get_grades(scope=class, sort_by=zeros) handles ties', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const enrollments = [
+      { id: 1, user_id: 1001, user: { id: 1001, name: 'B Smith', sortable_name: 'Smith, B' }, grades: { current_score: 80 } },
+      { id: 2, user_id: 1002, user: { id: 1002, name: 'A Adams', sortable_name: 'Adams, A' }, grades: { current_score: 90 } },
+    ]
+    const submissions = [
+      { id: 1, user_id: 1001, score: 0, missing: false, late: false, workflow_state: 'graded' },
+      { id: 2, user_id: 1002, score: 0, missing: false, late: false, workflow_state: 'graded' },
+    ]
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () => HttpResponse.json(enrollments)),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () => HttpResponse.json(submissions))
+    )
+    const { mcpClient, store } = await makeTestClient(configPath)
+    const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class', sort_by: 'zeros' } })
+    const data = parseBlindedResult(result)
+    const userText = getUserText(result)
+    const adamsToken = getStudentToken(userText, 'A Adams')
+    // Both have 1 zero, so it should sort by name ASC. Adams first.
+    expect(data.students[0].student).toBe(adamsToken)
+  })
+
+  it('get_grades(scope=student) handles non-CanvasApiError', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const store = new SecureStore()
+    const token = store.tokenize(1001, 'Jane Smith')
+    mswServer.use(
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () => {
+        return Promise.reject(new Error('Network error'))
+      }),
+      http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () => HttpResponse.json(MOCK_ENROLLMENTS))
+    )
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'student', student_token: token } })
+    expect(getContent(result)[0].text).toContain('Network error')
   })
 })

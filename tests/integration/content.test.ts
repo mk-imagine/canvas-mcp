@@ -88,12 +88,7 @@ afterAll(async () => {
     createdDiscussionIds.length + createdFileIds.length + createdRubricIds.length > 0
   if (!hasCleanup) return
   const canvasClient = new CanvasClient({ instanceUrl, apiToken })
-  const { deleteAssignment } = await import('../../src/canvas/assignments.js')
-  const { deleteQuiz } = await import('../../src/canvas/quizzes.js')
-  const { deletePage } = await import('../../src/canvas/pages.js')
-  const { deleteDiscussionTopic } = await import('../../src/canvas/discussions.js')
-  const { deleteFile } = await import('../../src/canvas/files.js')
-  const { deleteRubric } = await import('../../src/canvas/rubrics.js')
+  const { deleteAssignment, deleteQuiz, deletePage, deleteDiscussionTopic, deleteFile, deleteRubric } = await import('@canvas-mcp/core')
   const configPath = makeTmpConfigPath()
   makeConfig(configPath)
   const { mcpClient } = await makeIntegrationClient(configPath)
@@ -401,7 +396,7 @@ describe('Integration: delete_item — module', () => {
     await mcpClient.connect(clientTransport)
 
     // First create a throwaway module via Canvas directly
-    const { createModule } = await import('../../src/canvas/modules.js')
+    const { createModule } = await import('@canvas-mcp/core')
     const mod = await createModule(canvasClient, testCourseId, { name: '[MCP TEST] Throwaway Module' })
     console.log(`  Created throwaway module id=${mod.id}`)
 
@@ -536,7 +531,7 @@ describe('Integration: delete_item — page', () => {
     const { mcpClient } = await makeIntegrationClient(configPath)
 
     // Create a page and promote it to front page via canvas directly
-    const { createPage, updatePage, deletePage } = await import('../../src/canvas/pages.js')
+    const { createPage, updatePage, deletePage } = await import('@canvas-mcp/core')
     const canvasClient = new CanvasClient({ instanceUrl, apiToken })
     const page = await createPage(canvasClient, testCourseId, {
       title: '[MCP TEST] Temp Front Page',
@@ -1168,7 +1163,7 @@ describe('Integration: associate_rubric', () => {
 
     try {
       // Associate the rubric with assignment2 (re-association) via direct canvas API
-      const { createRubricAssociation } = await import('../../src/canvas/rubrics.js')
+      const { createRubricAssociation } = await import('@canvas-mcp/core')
       const association = await createRubricAssociation(canvasClient, testCourseId, {
         rubric_id: rubric.id,
         assignment_id: assignment2.id,

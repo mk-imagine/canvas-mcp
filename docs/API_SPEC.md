@@ -1,7 +1,7 @@
 # Canvas API Specification
 
 ## Official Documentation
-The `canvas-teacher-mcp` server utilizes the official Canvas LMS REST API.
+The `canvas-mcp` server utilizes the official Canvas LMS REST API.
 - **Link:** [Official Canvas API Documentation](https://canvas.instructure.com/doc/api/index.html)
 
 ## Authentication and Headers

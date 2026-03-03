@@ -1,4 +1,4 @@
-# canvas-teacher-mcp
+# canvas-mcp
 
 A teacher-facing [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that wraps the Canvas LMS REST API. Designed for an instructor who wants to use an AI assistant (e.g., Claude) to create and manage course content across multiple Canvas courses.
 
@@ -79,22 +79,22 @@ On macOS, Git is often already installed. Run `git --version` in Terminal to che
 In Terminal, run:
 
 ```bash
-git clone https://github.com/you/canvas-teacher-mcp
-cd canvas-teacher-mcp
+git clone https://github.com/you/canvas-mcp
+cd canvas-mcp
 ```
 
-This creates a folder called `canvas-teacher-mcp` in your home directory and places you inside it.
+This creates a folder called `canvas-mcp` in your home directory and places you inside it.
 
 ### 4. Install dependencies and build
 
-Still in Terminal, inside the `canvas-teacher-mcp` folder:
+Still in Terminal, inside the `canvas-mcp` folder:
 
 ```bash
 npm install
 npm run build
 ```
 
-`npm install` downloads the required packages (~1 minute, requires internet). `npm run build` compiles the TypeScript source to runnable JavaScript in the `dist/` folder. You should see no errors.
+`npm install` downloads the required packages (~1 minute, requires internet). `npm run build` compiles the TypeScript source to runnable JavaScript in `packages/teacher/dist/`. You should see no errors.
 
 ### 5. Get your Canvas API token
 
@@ -110,10 +110,10 @@ Create the directory and file the server reads on startup. In Terminal:
 
 **macOS/Linux:**
 ```bash
-mkdir -p ~/.config/mcp/canvas-teacher-mcp
+mkdir -p ~/.config/mcp/canvas-mcp
 ```
 
-Then open a text editor and create the file `~/.config/mcp/canvas-teacher-mcp/config.json` with this content (substitute your real values):
+Then open a text editor and create the file `~/.config/mcp/canvas-mcp/config.json` with this content (substitute your real values):
 
 ```json
 {
@@ -165,21 +165,21 @@ The assistant will call `list_courses` and show your courses. Then set the activ
 
 ## Configuration reference
 
-The server reads `~/.config/mcp/canvas-teacher-mcp/config.json` on startup by default. The setup instructions in step 6 above use this default path.
+The server reads `~/.config/mcp/canvas-mcp/config.json` on startup by default. The setup instructions in step 6 above use this default path.
 
 ### Using a custom config location
 
 If you need to store the config file somewhere other than the default — for example, to maintain separate configs for different schools or environments — you can point the server at any path using the `--config` flag in the server `args`:
 
 ```json
-"args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js", "--config", "/your/custom/path/config.json"]
+"args": ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js", "--config", "/your/custom/path/config.json"]
 ```
 
-If you use a custom location, replace `~/.config/mcp/canvas-teacher-mcp` with your chosen directory path everywhere it appears in the setup instructions — including the `mkdir` command in step 6 and the config file path you create there.
+If you use a custom location, replace `~/.config/mcp/canvas-mcp` with your chosen directory path everywhere it appears in the setup instructions — including the `mkdir` command in step 6 and the config file path you create there.
 
 ## Platform-Specific Setup
 
-The `~/.config/mcp/canvas-teacher-mcp/config.json` file created in step 6 is shared across all clients — you only configure it once.
+The `~/.config/mcp/canvas-mcp/config.json` file created in step 6 is shared across all clients — you only configure it once.
 
 ### Claude Desktop
 
@@ -187,14 +187,14 @@ The `~/.config/mcp/canvas-teacher-mcp/config.json` file created in step 6 is sha
 2. Open Finder (macOS) and press ⌘+Shift+G, then paste:
    `~/Library/Application Support/Claude/`
 3. Open (or create) the file `claude_desktop_config.json` in a text editor
-4. Add the following, replacing `/path/to/canvas-teacher-mcp` with the actual path to the folder you cloned in step 3 (e.g., `/Users/yourname/canvas-teacher-mcp`):
+4. Add the following, replacing `/path/to/canvas-mcp` with the actual path to the folder you cloned in step 3 (e.g., `/Users/yourname/canvas-mcp`):
 
 ```json
 {
   "mcpServers": {
-    "canvas-teacher-mcp": {
+    "canvas-mcp": {
       "command": "node",
-      "args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js"]
+      "args": ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js"]
     }
   }
 }
@@ -203,22 +203,22 @@ The `~/.config/mcp/canvas-teacher-mcp/config.json` file created in step 6 is sha
 5. Save the file and **restart Claude Desktop** (quit completely and reopen)
 6. Look for a hammer icon (🔨) in the Claude Desktop chat window — this confirms MCP tools are connected. Click it to see the tool list.
 
-If Claude Desktop was already open with other MCP servers configured, merge the `"canvas-teacher-mcp"` entry into your existing `"mcpServers"` object rather than replacing it.
+If Claude Desktop was already open with other MCP servers configured, merge the `"canvas-mcp"` entry into your existing `"mcpServers"` object rather than replacing it.
 
 ### Claude Code (Anthropic's `claude` CLI)
 
 Add the server to your user-level MCP config with a single command:
 
 ```bash
-claude mcp add canvas-teacher-mcp -- node --secure-heap=65536 /path/to/canvas-teacher-mcp/dist/index.js
+claude mcp add canvas-mcp -- node --secure-heap=65536 /path/to/canvas-mcp/packages/teacher/dist/index.js
 ```
 
-Replace `/path/to/canvas-teacher-mcp` with the actual folder path from step 3. This writes to `~/.claude.json` (user scope) and makes the server available in all Claude Code sessions.
+Replace `/path/to/canvas-mcp` with the actual folder path from step 3. This writes to `~/.claude.json` (user scope) and makes the server available in all Claude Code sessions.
 
 To add it to a specific project only (so it isn't available globally), run the command from inside that project's folder and add `--scope project`:
 
 ```bash
-claude mcp add --scope project canvas-teacher-mcp -- node --secure-heap=65536 /path/to/canvas-teacher-mcp/dist/index.js
+claude mcp add --scope project canvas-mcp -- node --secure-heap=65536 /path/to/canvas-mcp/packages/teacher/dist/index.js
 ```
 
 Verify the server was added:
@@ -234,15 +234,15 @@ Edit `~/.gemini/settings.json` (create it if it doesn't exist):
 ```json
 {
   "mcpServers": {
-    "canvas-teacher-mcp": {
+    "canvas-mcp": {
       "command": "node",
-      "args": ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js"]
+      "args": ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js"]
     }
   }
 }
 ```
 
-If you have other servers already configured, add the `"canvas-teacher-mcp"` entry inside the existing `"mcpServers"` object. Restart Gemini CLI after saving.
+If you have other servers already configured, add the `"canvas-mcp"` entry inside the existing `"mcpServers"` object. Restart Gemini CLI after saving.
 
 To limit the server to a single project instead of all sessions, place the same JSON in `.gemini/settings.json` inside that project's folder.
 
@@ -251,9 +251,9 @@ To limit the server to a single project instead of all sessions, place the same 
 Edit `~/.codex/config.toml` (create it if it doesn't exist):
 
 ```toml
-[mcp_servers.canvas-teacher-mcp]
+[mcp_servers.canvas-mcp]
 command = "node"
-args = ["--secure-heap=65536", "/path/to/canvas-teacher-mcp/dist/index.js"]
+args = ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js"]
 ```
 
 To limit it to a single project, place the same TOML in `.codex/config.toml` inside that project's folder (the project must be trusted).
@@ -381,19 +381,10 @@ During `reset_course`, the rubric cleanup step (step 8) handles any pre-existing
 
 ```bash
 # Unit tests (no credentials required)
-npm test
-
-# Unit tests with watch mode
-npm run test:watch
-
-# Unit tests with coverage report
-npm run test:coverage
+npm run test:unit
 
 # Integration tests (requires .env.test — see below)
 npm run test:integration
-
-# Combined coverage report (Unit + Integration)
-npm run test:coverage:all
 ```
 
 Unit tests mock all HTTP with [msw](https://mswjs.io/). Integration tests run against a real Canvas instance.
@@ -413,41 +404,45 @@ Use a free [canvas.instructure.com](https://canvas.instructure.com) account with
 ### Build
 
 ```bash
-npm run build   # compiles src/ → dist/
-npm start       # runs dist/index.js
+npm run build   # compiles packages/core and packages/teacher → their dist/ folders
 ```
 
 ### Project structure
 
 ```
-src/
-├── index.ts              # MCP server entry point
-├── canvas/
-│   ├── client.ts         # HTTP client (auth, pagination, rate limiting, retry)
-│   ├── courses.ts        # Course & enrollment API calls
-│   ├── modules.ts        # Module & module item API calls
-│   ├── assignments.ts    # Assignment & assignment-group API calls
-│   ├── quizzes.ts        # Classic Quiz API calls
-│   ├── pages.ts          # Page API calls (CRUD + front page handling)
-│   ├── discussions.ts    # Discussion topic & announcement API calls
-│   ├── files.ts          # File upload (3-step Canvas/S3 flow) & delete
-│   ├── rubrics.ts        # Rubric CRUD + association API calls
-│   └── search.ts         # Canvas Smart Search API
-├── config/
-│   ├── schema.ts         # Config types and DEFAULT_CONFIG
-│   └── manager.ts        # Read/write ~/.config/mcp/canvas-teacher-mcp/config.json
-├── security/
-│   └── secure-store.ts   # AES-256-GCM in-memory PII store (session tokens, mlock)
-├── templates/
-│   └── index.ts          # Module template renderer (Handlebars)
-└── tools/
-    ├── context.ts        # list_courses, set_active_course, get_active_course
-    ├── content.ts        # upload_file, create_rubric, delete_file
-    ├── modules.ts        # build_module (lesson / solution / clone templates)
-    ├── reporting.ts      # get_module_summary, get_grades, get_submission_status, student_pii
-    ├── reset.ts          # reset_course (dry_run + confirmation gate)
-    └── find.ts           # create_item, list_items, find_item, update_item, delete_item, search_course
+packages/
+├── core/                         # @canvas-mcp/core — shared Canvas API layer
+│   └── src/
+│       ├── canvas/
+│       │   ├── client.ts         # HTTP client (auth, pagination, rate limiting, retry)
+│       │   ├── courses.ts        # Course & enrollment API calls
+│       │   ├── modules.ts        # Module & module item API calls
+│       │   ├── assignments.ts    # Assignment & assignment-group API calls
+│       │   ├── quizzes.ts        # Classic Quiz API calls
+│       │   ├── pages.ts          # Page API calls (CRUD + front page handling)
+│       │   ├── discussions.ts    # Discussion topic & announcement API calls
+│       │   ├── files.ts          # File upload (3-step Canvas/S3 flow) & delete
+│       │   ├── rubrics.ts        # Rubric CRUD + association API calls
+│       │   ├── submissions.ts    # Grade & submission API calls
+│       │   └── search.ts         # Canvas Smart Search API
+│       ├── config/
+│       │   ├── schema.ts         # Config types and DEFAULT_CONFIG
+│       │   └── manager.ts        # Read/write ~/.config/mcp/canvas-mcp/config.json
+│       ├── security/
+│       │   └── secure-store.ts   # AES-256-GCM in-memory PII store (session tokens, mlock)
+│       ├── templates/
+│       │   └── index.ts          # Module template renderer (Handlebars)
+│       └── tools/
+│           └── context.ts        # list_courses, set_active_course, get_active_course
+└── teacher/                      # @canvas-mcp/teacher — MCP server entry point
+    └── src/
+        ├── index.ts              # MCP server wiring and startup
+        └── tools/
+            ├── content.ts        # upload_file, create_rubric, delete_file
+            ├── modules.ts        # build_module (lesson / solution / clone templates)
+            ├── reporting.ts      # get_module_summary, get_grades, get_submission_status, student_pii
+            ├── reset.ts          # reset_course (dry_run + confirmation gate)
+            └── find.ts           # create_item, list_items, find_item, update_item, delete_item, search_course
 tests/
-├── unit/                 # Vitest + msw, no credentials required (229 tests)
-└── integration/          # Real Canvas API, requires .env.test (88 tests)
+└── integration/          # Real Canvas API tests, requires .env.test
 ```

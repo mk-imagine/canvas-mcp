@@ -428,8 +428,6 @@ export function registerReportingTools(
           },
         }, secureStore)
       }
-
-      return toolError('Unknown scope')
     }
   )
 
@@ -606,8 +604,6 @@ export function registerReportingTools(
           students: blindedStudents,
         }, secureStore)
       }
-
-      return toolError('Unknown type')
     }
   )
 
@@ -667,8 +663,6 @@ export function registerReportingTools(
           ],
         }
       }
-
-      return toolError('Unknown action')
     }
   )
 }

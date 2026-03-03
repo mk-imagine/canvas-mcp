@@ -85,8 +85,7 @@ const createdModuleItemIds: Array<{ moduleId: number; itemId: number }> = []
 afterAll(async () => {
   const hasCleanup = createdAssignmentIds.length + createdPageUrls.length > 0
   if (!hasCleanup) return
-  const { deleteAssignment } = await import('../../src/canvas/assignments.js')
-  const { deletePage } = await import('../../src/canvas/pages.js')
+  const { deleteAssignment, deletePage } = await import('@canvas-mcp/core')
   const canvasClient = new CanvasClient({ instanceUrl, apiToken })
   for (const id of createdAssignmentIds) {
     try {

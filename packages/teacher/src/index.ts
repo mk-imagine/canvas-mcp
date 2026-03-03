@@ -21,7 +21,7 @@ async function main() {
   const configManager = new ConfigManager(configPath)
   const config = configManager.read()
   const client = new CanvasClient(config.canvas)
-  const server = new McpServer({ name: 'canvas-teacher-mcp', version: '0.1.0' })
+  const server = new McpServer({ name: 'canvas-mcp', version: '0.1.0' })
   registerContextTools(server, client, configManager)
   registerReportingTools(server, client, configManager, secureStore)
   registerContentTools(server, client, configManager)

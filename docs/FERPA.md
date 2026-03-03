@@ -6,7 +6,7 @@ The Family Educational Rights and Privacy Act (FERPA) is a federal law that affo
 When using AI assistants (like Claude or Gemini) to process student data, it is critical to ensure that PII is not exposed to the AI model's training data or processed in a way that violates institutional privacy policies.
 
 ## PII Blinding Strategy
-`canvas-teacher-mcp` implements a **PII Blinding** strategy to protect student identities. This ensures that the AI assistant only sees opaque tokens instead of real student names or Canvas IDs.
+`canvas-mcp` implements a **PII Blinding** strategy to protect student identities. This ensures that the AI assistant only sees opaque tokens instead of real student names or Canvas IDs.
 
 ### How it Works
 1.  **Tokenization:** When fetching student-related data (grades, submissions, etc.), the server intercepts the response.
