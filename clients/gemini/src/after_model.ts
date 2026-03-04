@@ -37,7 +37,7 @@ function loadMapping(): Record<string, string> | null {
 }
 
 function unblindText(text: string, mapping: Record<string, string>): string {
-  return text.replace(TOKEN_PATTERN, (token) => mapping[token] ?? token)
+  return text.replaceAll(TOKEN_PATTERN, (token) => mapping[token] ?? token)
 }
 
 function unblindValue(value: unknown, mapping: Record<string, string>): unknown {

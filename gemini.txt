@@ -57,3 +57,11 @@
       }
     ]
   }
+
+  ,
+          {
+            "type": "command",
+            "command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/after_tool.js",
+            "name": "canvas-mcp: progress indicator",
+            "timeout": 5000
+          }

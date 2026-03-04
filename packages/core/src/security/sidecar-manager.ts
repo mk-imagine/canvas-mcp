@@ -18,17 +18,21 @@ export class SidecarManager {
   }
 
   /**
-   * Writes the current token↔name mapping to disk if the session has changed.
+   * Writes the current token↔name mapping to disk if the mapping has grown
+   * since the last write (or on first write for this session).
    * Returns true if the file was written, false if it was a no-op.
    */
   sync(store: SecureStore): boolean {
     if (!this.enabled) return false
 
-    // Check if existing sidecar matches this session
+    const currentTokenCount = store.listTokens().length
+
+    // Skip write if session and token count are both unchanged
     if (existsSync(this.sidecarPath)) {
       try {
         const existing = JSON.parse(readFileSync(this.sidecarPath, 'utf-8')) as SidecarFile
-        if (existing.session_id === store.sessionId) return false
+        const existingTokenCount = Object.keys(existing.mapping).filter(k => k.startsWith('[STUDENT_')).length
+        if (existing.session_id === store.sessionId && existingTokenCount === currentTokenCount) return false
       } catch {
         // Corrupt sidecar — fall through and overwrite
       }

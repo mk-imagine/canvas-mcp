@@ -1,17 +1,13 @@
 /**
  * Gemini CLI after_tool hook — progress indicator.
  *
- * Hook output format for AfterTool (from Gemini CLI types.ts):
- *   systemMessage           — shown to the user in the terminal, NOT sent to the model
- *   hookSpecificOutput
- *     hookEventName         — 'AfterTool'
- *     additionalContext     — text appended to llmContent (in <hook_context> tags) FOR the model
- *
- * The tool result (llmContent / blinded JSON) is preserved by the CLI and
- * reaches the model unchanged. additionalContext is appended after it.
+ * Writes a one-line systemMessage to the terminal for canvas-mcp tool calls.
+ * systemMessage is shown to the user only — it is NOT sent to the model.
+ * No hookSpecificOutput is returned; the tool result reaches the model unchanged.
  *
  * Returning `{}` on JSON parse failure is a safe no-op.
  */
+
 
 async function main() {
   const chunks: Buffer[] = []
@@ -52,10 +48,6 @@ async function main() {
 
   process.stdout.write(JSON.stringify({
     systemMessage: `[canvas-mcp] ${summary}`,
-    hookSpecificOutput: {
-      hookEventName: 'AfterTool',
-      additionalContext: 'Student names are replaced with [STUDENT_NNN] privacy tokens. This is the complete data — do not call this tool again to get real names.',
-    },
   }))
 }
 
