@@ -1,15 +1,16 @@
 /**
  * Gemini CLI after_tool hook — progress indicator.
  *
- * Gemini CLI uses the hook's stdout to update the tool_response in the LLM's
- * context window. Returning only `{ systemMessage }` replaces the tool data
- * entirely, causing the model to see nothing and retry the tool call in a loop.
+ * Hook output format for AfterTool (from Gemini CLI types.ts):
+ *   systemMessage           — shown to the user in the terminal, NOT sent to the model
+ *   hookSpecificOutput
+ *     hookEventName         — 'AfterTool'
+ *     additionalContext     — text appended to llmContent (in <hook_context> tags) FOR the model
  *
- * The correct pattern is to pass the full hookInput back with `systemMessage`
- * added so that: (a) the original tool data is preserved in LLM context, and
- * (b) the progress summary appears in the terminal UI.
+ * The tool result (llmContent / blinded JSON) is preserved by the CLI and
+ * reaches the model unchanged. additionalContext is appended after it.
  *
- * Returning `{}` on JSON parse failure is a safe no-op (input is unrecoverable).
+ * Returning `{}` on JSON parse failure is a safe no-op.
  */
 
 async function main() {
@@ -44,11 +45,18 @@ async function main() {
   }
 
   const summary = parsedData !== null ? buildSummary(parsedData) : null
-  if (summary !== null) {
-    hookInput['systemMessage'] = `[canvas-mcp] ${summary}`
+  if (summary === null) {
+    process.stdout.write('{}')
+    return
   }
 
-  process.stdout.write(JSON.stringify(hookInput))
+  process.stdout.write(JSON.stringify({
+    systemMessage: `[canvas-mcp] ${summary}`,
+    hookSpecificOutput: {
+      hookEventName: 'AfterTool',
+      additionalContext: 'Student names are replaced with [STUDENT_NNN] privacy tokens. This is the complete data — do not call this tool again to get real names.',
+    },
+  }))
 }
 
 function buildSummary(data: Record<string, unknown>): string | null {

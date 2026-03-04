@@ -93,7 +93,7 @@ Add the following to your Gemini CLI user settings at **`~/.gemini/settings.json
     ],
     "AfterTool": [
       {
-        "matcher": "mcp__canvas.mcp__.*",
+        "matcher": "canvas.mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -108,7 +108,7 @@ Add the following to your Gemini CLI user settings at **`~/.gemini/settings.json
 }
 ```
 
-The `AfterTool` matcher `mcp__canvas.mcp__.*` uses `.` as a regex wildcard to match both `mcp__canvas-mcp__*` and `mcp__canvas_mcp__*` — Gemini CLI may normalise the hyphen in the server name to an underscore internally. `BeforeModel` and `AfterModel` apply to every model call but return `{}` (no-op) when the sidecar doesn't exist yet.
+The `AfterTool` matcher `canvas.mcp__.*` is a regex. Gemini CLI names MCP tools as `servername__toolname` (no `mcp__` prefix). The `.` wildcard matches both `canvas-mcp__*` and `canvas_mcp__*` depending on whether Gemini CLI preserves or normalises the hyphen. `BeforeModel` and `AfterModel` apply to every model call but return `{}` (no-op) when the sidecar doesn't exist yet.
 
 > **Project-level override:** You can also place a `.gemini/settings.json` inside a specific project directory. Project settings take precedence over user settings.
 

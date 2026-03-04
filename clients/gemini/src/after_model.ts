@@ -83,6 +83,12 @@ async function main() {
 
   const unblindedResponse = unblindValue(llmResponse, mapping)
 
+  // If nothing changed, return a no-op
+  if (JSON.stringify(llmResponse) === JSON.stringify(unblindedResponse)) {
+    process.stdout.write('{}')
+    return
+  }
+
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'AfterModel',

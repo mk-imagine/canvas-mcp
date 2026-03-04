@@ -17,6 +17,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
+
 const DEFAULT_SIDECAR_PATH = join(homedir(), '.cache', 'canvas-mcp', 'pii_session.json')
 const sidecarPath = process.env['CANVAS_MCP_SIDECAR_PATH'] ?? DEFAULT_SIDECAR_PATH
 
@@ -89,6 +90,16 @@ async function main() {
   }
 
   const blindedRequest = blindValue(llmRequest, mapping)
+
+  // If nothing changed, return a no-op so Gemini uses the original request unchanged
+  const originalJson = JSON.stringify(llmRequest)
+  const blindedJson = JSON.stringify(blindedRequest)
+  const changed = originalJson !== blindedJson
+
+  if (!changed) {
+    process.stdout.write('{}')
+    return
+  }
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
