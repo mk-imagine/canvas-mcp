@@ -15,6 +15,7 @@ import {
   fetchAssignment,
   fetchAssignmentGroups,
   SecureStore,
+  SidecarManager,
 } from '@canvas-mcp/core'
 
 function resolveCourseId(config: CanvasTeacherConfig, override?: number): number {
@@ -34,27 +35,33 @@ function toJson(value: unknown) {
 }
 
 /**
- * Builds a two-block response for PII-blinded data.
- * content[0]: blinded JSON for the assistant — tokens only, no real names
- * content[1]: unblinded JSON for the user — same structure, tokens replaced with real names
+ * Builds a single-block blinded response.
+ *
+ * Only the blinded JSON (tokens, no real names) is sent as a content block.
+ * A second "unblinded" block is intentionally omitted: MCP clients that do not
+ * filter by audience annotation (e.g. Gemini CLI) would display — and pass to
+ * the model — any user-audience block, defeating the blinding entirely.
+ *
+ * Clients that want real names should configure an after_model hook to replace
+ * tokens in the model's text response, or call student_pii(action='resolve').
+ *
+ * The sidecar sync notification is written to stderr so it appears in the
+ * client's debug/log output without polluting the MCP content stream.
  */
-function blindedResponse(blindedData: unknown, store: SecureStore) {
+function blindedResponse(blindedData: unknown, store: SecureStore, sidecarManager?: SidecarManager) {
   const blindedJson = JSON.stringify(blindedData, null, 2)
-  const unblindedJson = store.listTokens().reduce((text, token) => {
-    const resolved = store.resolve(token)!
-    return text.replaceAll(token, resolved.name)
-  }, blindedJson)
+  if (sidecarManager?.sync(store)) {
+    const n = store.listTokens().length
+    process.stderr.write(
+      `[canvas-mcp] PII sidecar updated — ${n} student${n === 1 ? '' : 's'} mapped to tokens.\n`
+    )
+  }
   return {
     content: [
       {
         type: 'text' as const,
         text: blindedJson,
         annotations: { audience: ['assistant' as const] },
-      },
-      {
-        type: 'text' as const,
-        text: unblindedJson,
-        annotations: { audience: ['user' as const] },
       },
     ],
   }
@@ -65,6 +72,7 @@ export function registerReportingTools(
   client: CanvasClient,
   configManager: ConfigManager,
   secureStore: SecureStore,
+  sidecarManager: SidecarManager,
 ): void {
   // ── get_module_summary ──────────────────────────────────────────────────────
 
@@ -211,6 +219,9 @@ export function registerReportingTools(
       }
 
       if (args.scope === 'class') {
+        const config = configManager.read()
+        const blindingEnabled = config.privacy.blindingEnabled
+
         const [enrollments, allSubmissions] = await Promise.all([
           fetchStudentEnrollments(client, courseId),
           fetchAllSubmissions(client, courseId),
@@ -275,6 +286,24 @@ export function registerReportingTools(
             return a.sortable_name.localeCompare(b.sortable_name)
           })
 
+        if (!blindingEnabled) {
+          return toJson({
+            course_id: courseId,
+            as_of: new Date().toISOString(),
+            sort_by: sortBy,
+            student_count: students.length,
+            students: students.map((s) => ({
+              student: s.name,
+              current_score: s.current_score,
+              final_score: s.final_score,
+              missing_count: s.missing_count,
+              late_count: s.late_count,
+              ungraded_count: s.ungraded_count,
+              zeros_count: s.zeros_count,
+            })),
+          })
+        }
+
         const blindedStudents = students.map((s) => {
           const token = secureStore.tokenize(s.id, s.name)
           return {
@@ -294,10 +323,13 @@ export function registerReportingTools(
           sort_by: sortBy,
           student_count: blindedStudents.length,
           students: blindedStudents,
-        }, secureStore)
+        }, secureStore, sidecarManager)
       }
 
       if (args.scope === 'assignment') {
+        const config = configManager.read()
+        const blindingEnabled = config.privacy.blindingEnabled
+
         const [assignment, submissions] = await Promise.all([
           fetchAssignment(client, courseId, args.assignment_id),
           fetchAssignmentSubmissions(client, courseId, args.assignment_id),
@@ -316,6 +348,50 @@ export function registerReportingTools(
           }))
           .sort((a, b) => a.student_name.localeCompare(b.student_name))
 
+        const gradedScores = submissions
+          .map((s) => s.score)
+          .filter((score): score is number => score !== null)
+
+        const mean_score =
+          gradedScores.length > 0
+            ? Math.round((gradedScores.reduce((a, b) => a + b, 0) / gradedScores.length) * 10) / 10
+            : null
+
+        const summary = {
+          total_students: submissions.length,
+          submitted: submissions.filter((s) => s.workflow_state !== 'unsubmitted').length,
+          missing: submissions.filter((s) => s.missing).length,
+          late: submissions.filter((s) => s.late).length,
+          ungraded: submissions.filter(
+            (s) => s.workflow_state === 'submitted' && s.graded_at === null
+          ).length,
+          mean_score,
+        }
+
+        const assignmentInfo = {
+          id: assignment.id,
+          name: assignment.name,
+          points_possible: assignment.points_possible,
+          due_at: assignment.due_at,
+          html_url: assignment.html_url,
+        }
+
+        if (!blindingEnabled) {
+          return toJson({
+            assignment: assignmentInfo,
+            submissions: submissionRows.map((row) => ({
+              student: row.student_name,
+              score: row.score,
+              submitted_at: row.submitted_at,
+              graded_at: row.graded_at,
+              late: row.late,
+              missing: row.missing,
+              workflow_state: row.workflow_state,
+            })),
+            summary,
+          })
+        }
+
         const blindedRows = submissionRows.map((row) => {
           const token = secureStore.tokenize(row.student_id, row.student_name)
           return {
@@ -329,38 +405,20 @@ export function registerReportingTools(
           }
         })
 
-        const gradedScores = submissions
-          .map((s) => s.score)
-          .filter((score): score is number => score !== null)
-
-        const mean_score =
-          gradedScores.length > 0
-            ? Math.round((gradedScores.reduce((a, b) => a + b, 0) / gradedScores.length) * 10) / 10
-            : null
-
         return blindedResponse({
-          assignment: {
-            id: assignment.id,
-            name: assignment.name,
-            points_possible: assignment.points_possible,
-            due_at: assignment.due_at,
-            html_url: assignment.html_url,
-          },
+          assignment: assignmentInfo,
           submissions: blindedRows,
-          summary: {
-            total_students: submissions.length,
-            submitted: submissions.filter((s) => s.workflow_state !== 'unsubmitted').length,
-            missing: submissions.filter((s) => s.missing).length,
-            late: submissions.filter((s) => s.late).length,
-            ungraded: submissions.filter(
-              (s) => s.workflow_state === 'submitted' && s.graded_at === null
-            ).length,
-            mean_score,
-          },
-        }, secureStore)
+          summary,
+        }, secureStore, sidecarManager)
       }
 
       if (args.scope === 'student') {
+        const config = configManager.read()
+        const blindingEnabled = config.privacy.blindingEnabled
+        if (!blindingEnabled) {
+          return toolError('get_grades(scope="student") requires blinding to be enabled. Enable privacy.blindingEnabled in config.')
+        }
+
         const resolved = secureStore.resolve(args.student_token)
         if (!resolved) {
           return toolError(`Unknown student token: ${args.student_token}`)
@@ -427,7 +485,7 @@ export function registerReportingTools(
             total_ungraded,
             total_graded,
           },
-        }, secureStore)
+        }, secureStore, sidecarManager)
       }
 
       throw new Error(`Unsupported scope: ${(args as any).scope}`)
@@ -464,6 +522,9 @@ export function registerReportingTools(
       }
 
       if (args.type === 'missing') {
+        const config = configManager.read()
+        const blindingEnabled = config.privacy.blindingEnabled
+
         const submissions = await fetchAllSubmissions(client, courseId, {
           workflowState: 'unsubmitted',
         })
@@ -524,6 +585,18 @@ export function registerReportingTools(
             return a.sortable_name.localeCompare(b.sortable_name)
           })
 
+        if (!blindingEnabled) {
+          return toJson({
+            as_of: new Date().toISOString(),
+            total_missing_submissions: missing.length,
+            students: students.map((s) => ({
+              student: s.name,
+              missing_assignments: s.missing_assignments,
+              missing_count: s.missing_count,
+            })),
+          })
+        }
+
         const blindedStudents = students.map((s) => {
           const token = secureStore.tokenize(s.id, s.name)
           return {
@@ -537,10 +610,13 @@ export function registerReportingTools(
           as_of: new Date().toISOString(),
           total_missing_submissions: missing.length,
           students: blindedStudents,
-        }, secureStore)
+        }, secureStore, sidecarManager)
       }
 
       if (args.type === 'late') {
+        const config = configManager.read()
+        const blindingEnabled = config.privacy.blindingEnabled
+
         const allSubmissions = await fetchAllSubmissions(client, courseId)
         const lateSubmissions = allSubmissions.filter((s) => s.late)
 
@@ -592,6 +668,18 @@ export function registerReportingTools(
             return a.sortable_name.localeCompare(b.sortable_name)
           })
 
+        if (!blindingEnabled) {
+          return toJson({
+            as_of: new Date().toISOString(),
+            total_late_submissions: lateSubmissions.length,
+            students: students.map((s) => ({
+              student: s.name,
+              late_assignments: s.late_assignments,
+              late_count: s.late_count,
+            })),
+          })
+        }
+
         const blindedStudents = students.map((s) => {
           const token = secureStore.tokenize(s.id, s.name)
           return {
@@ -605,7 +693,7 @@ export function registerReportingTools(
           as_of: new Date().toISOString(),
           total_late_submissions: lateSubmissions.length,
           students: blindedStudents,
-        }, secureStore)
+        }, secureStore, sidecarManager)
       }
 
       throw new Error(`Unsupported type: ${(args as any).type}`)

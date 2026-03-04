@@ -8,7 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { server as mswServer } from '../../setup/msw-server.js'
-import { CanvasClient, ConfigManager, SecureStore } from '@canvas-mcp/core'
+import { CanvasClient, ConfigManager, SecureStore, SidecarManager } from '@canvas-mcp/core'
 import { registerReportingTools } from '../../../src/tools/reporting.js'
 
 const CANVAS_URL = 'https://canvas.example.com'
@@ -102,7 +102,8 @@ async function makeTestClient(configPath: string, store?: SecureStore) {
   const configManager = new ConfigManager(configPath)
   const canvasClient = new CanvasClient({ instanceUrl: CANVAS_URL, apiToken: 'tok' })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerReportingTools(mcpServer, canvasClient, configManager, secureStore)
+  const sidecarManager = new SidecarManager('', false)
+  registerReportingTools(mcpServer, canvasClient, configManager, secureStore, sidecarManager)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'test-client', version: '0.0.1' })
@@ -122,16 +123,6 @@ function getContent(result: ToolResult): ContentBlock[] {
 /** Parses content[0].text as JSON (assistant-audience blinded data — tokens only). */
 function parseBlindedResult(result: ToolResult) {
   return JSON.parse(getContent(result)[0].text)
-}
-
-/** Parses content[1].text as JSON (user-audience unblinded data — real names). */
-function parseUserResult(result: ToolResult) {
-  return JSON.parse(getContent(result)[1].text)
-}
-
-/** Returns content[1].text raw string (user-audience). */
-function getUserText(result: ToolResult): string {
-  return getContent(result)[1].text
 }
 
 /** Helper for non-blinded tools that return a single JSON block. */
@@ -249,10 +240,10 @@ describe('get_grades — scope=class', () => {
       arguments: { scope: 'class' },
     })
     const blocks = getContent(result)
-    // Audience annotations
+    // Single blinded block with assistant audience
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toContain('assistant')
-    expect(blocks[1].annotations?.audience).toContain('user')
-    // Assistant block: tokens only, no real names
+    // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.student_count).toBe(2)
     expect(data.students[0].student).toMatch(/\[STUDENT_\d{3}\]/)
@@ -260,11 +251,6 @@ describe('get_grades — scope=class', () => {
     expect(data.students[0].missing_count).toBeDefined()
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).not.toContain('Bob Adams')
-    // User block: real names in JSON, no tokens
-    const userText = getUserText(result)
-    expect(userText).toContain('Jane Smith')
-    expect(userText).toContain('Bob Adams')
-    expect(userText).not.toMatch(/\[STUDENT_\d{3}\]/)
   })
 
   it('sorts by engagement (missing DESC)', async () => {
@@ -276,9 +262,9 @@ describe('get_grades — scope=class', () => {
       arguments: { scope: 'class', sort_by: 'engagement' },
     })
     // Bob has 1 missing, Jane has 0 → Bob first
-    // Verify via user-facing block (real names, same order)
-    const userData = parseUserResult(result)
-    expect(userData.students[0].student).toBe('Bob Adams')
+    const data = parseBlindedResult(result)
+    expect(data.students[0].missing_count).toBe(1)
+    expect(data.students[1].missing_count).toBe(0)
   })
 
   it('sorts by grade (score ASC)', async () => {
@@ -290,8 +276,9 @@ describe('get_grades — scope=class', () => {
       arguments: { scope: 'class', sort_by: 'grade' },
     })
     // Bob has 60, Jane has 87.4 → Bob first
-    const userData = parseUserResult(result)
-    expect(userData.students[0].student).toBe('Bob Adams')
+    const data = parseBlindedResult(result)
+    expect(data.students[0].current_score).toBe(60)
+    expect(data.students[1].current_score).toBe(87.4)
   })
 
   it('sorts by zeros (zeros DESC)', async () => {
@@ -310,8 +297,9 @@ describe('get_grades — scope=class', () => {
       arguments: { scope: 'class', sort_by: 'zeros' },
     })
     // Jane has 1 zero, Bob has 0 → Jane first
-    const userData = parseUserResult(result)
-    expect(userData.students[0].student).toBe('Jane Smith')
+    const data = parseBlindedResult(result)
+    expect(data.students[0].zeros_count).toBe(1)
+    expect(data.students[1].zeros_count).toBe(0)
   })
 
   it('filters by assignment_group_id', async () => {
@@ -384,10 +372,11 @@ describe('get_grades — scope=class sorting', () => {
 
     // All have 0 missing, 0 late.
     // Alice and Jane have null scores, Bob has 60.
-    // With engagement sort, null scores should come first, sorted by name.
-    // So order should be Alice (null), Jane (null), Bob (60)
-    const userData = parseUserResult(result)
-    expect(userData.students.map((s: any) => s.student)).toEqual(['A Alice Jones', 'C Jane Smith', 'B Bob Adams'])
+    // With engagement sort, null scores should come first, Bob (60) last.
+    const data = parseBlindedResult(result)
+    expect(data.students[0].current_score).toBeNull()
+    expect(data.students[1].current_score).toBeNull()
+    expect(data.students[2].current_score).toBe(60)
   });
 
   it('sorts by grade with null scores', async () => {
@@ -430,8 +419,10 @@ describe('get_grades — scope=class sorting', () => {
 
     // grade sort is score ASC. nulls first, then by score.
     // Order should be Alice (null), Bob (60), Jane (80)
-    const userData = parseUserResult(result)
-    expect(userData.students.map((s: any) => s.student)).toEqual(['A Alice Jones', 'B Bob Adams', 'C Jane Smith'])
+    const data = parseBlindedResult(result)
+    expect(data.students[0].current_score).toBeNull()
+    expect(data.students[1].current_score).toBe(60)
+    expect(data.students[2].current_score).toBe(80)
   })
 })
 
@@ -459,10 +450,10 @@ describe('get_grades — scope=assignment', () => {
       arguments: { scope: 'assignment', assignment_id: 501 },
     })
     const blocks = getContent(result)
-    // Audience annotations
+    // Single blinded block with assistant audience
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toContain('assistant')
-    expect(blocks[1].annotations?.audience).toContain('user')
-    // Assistant block: tokens only, no real names
+    // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.assignment.id).toBe(501)
     expect(data.submissions).toHaveLength(2)
@@ -471,10 +462,6 @@ describe('get_grades — scope=assignment', () => {
     expect(data.summary.missing).toBe(1)
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).not.toContain('Bob Adams')
-    // User block: real names in JSON, no tokens
-    const userText = getUserText(result)
-    expect(userText).toContain('Jane Smith')
-    expect(userText).not.toMatch(/\[STUDENT_\d{3}\]/)
   })
 })
 
@@ -505,19 +492,15 @@ describe('get_grades — scope=student', () => {
       arguments: { scope: 'student', student_token: janeToken },
     })
     const blocks = getContent(result)
-    // Audience annotations
+    // Single blinded block with assistant audience
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toContain('assistant')
-    expect(blocks[1].annotations?.audience).toContain('user')
-    // Assistant block: no real names
+    // Block: no real names
     const data = parseBlindedResult(result)
     expect(data.student_token).toBe(janeToken)
     expect(data.current_score).toBe(87.4)
     expect(data.assignments.length).toBeGreaterThan(0)
     expect(blocks[0].text).not.toContain('Jane Smith')
-    // User block: real names in JSON, no tokens
-    const userText = getUserText(result)
-    expect(userText).toContain('Jane Smith')
-    expect(userText).not.toMatch(/\[STUDENT_\d{3}\]/)
   })
 
   it('returns error for unknown token', async () => {
@@ -598,10 +581,10 @@ describe('get_submission_status — type=missing', () => {
       arguments: { type: 'missing' },
     })
     const blocks = getContent(result)
-    // Audience annotations
+    // Single blinded block with assistant audience
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toContain('assistant')
-    expect(blocks[1].annotations?.audience).toContain('user')
-    // Assistant block: tokens only, no real names
+    // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_missing_submissions).toBe(1)
     expect(data.students).toHaveLength(1)
@@ -609,10 +592,6 @@ describe('get_submission_status — type=missing', () => {
     expect(data.students[0].missing_count).toBe(1)
     expect(blocks[0].text).not.toContain('Bob Adams')
     expect(blocks[0].text).not.toContain('Jane Smith')
-    // User block: real names in JSON, no tokens
-    const userText = getUserText(result)
-    expect(userText).toContain('Bob Adams')
-    expect(userText).not.toMatch(/\[STUDENT_\d{3}\]/)
   })
 
   it('filters missing assignments with since_date', async () => {
@@ -635,8 +614,8 @@ describe('get_submission_status — type=missing', () => {
     const data = parseBlindedResult(result)
     expect(data.total_missing_submissions).toBe(1)
     expect(data.students).toHaveLength(1)
-    const userData = parseUserResult(result)
-    expect(userData.students[0].student).toBe('Jane Smith')
+    // The included assignment should be Assignment C (id=503), not the earlier-due-date one
+    expect(data.students[0].missing_assignments[0].assignment_id).toBe(503)
   })
 
   it('sorts missing assignments with null due dates', async () => {
@@ -692,10 +671,10 @@ describe('get_submission_status — type=late', () => {
       arguments: { type: 'late' },
     })
     const blocks = getContent(result)
-    // Audience annotations
+    // Single blinded block with assistant audience
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toContain('assistant')
-    expect(blocks[1].annotations?.audience).toContain('user')
-    // Assistant block: tokens only, no real names
+    // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_late_submissions).toBe(1)
     expect(data.students).toHaveLength(1)
@@ -703,10 +682,6 @@ describe('get_submission_status — type=late', () => {
     expect(data.students[0].late_count).toBe(1)
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).not.toContain('Bob Adams')
-    // User block: real names in JSON, no tokens
-    const userText = getUserText(result)
-    expect(userText).toContain('Jane Smith')
-    expect(userText).not.toMatch(/\[STUDENT_\d{3}\]/)
   })
 
   it('sorts late assignments with null submitted_at dates', async () => {
@@ -892,14 +867,15 @@ describe('get_module_summary — module_name', () => {
 
 // ─── FERPA blinding — MCP protocol compliance ─────────────────────────────────
 //
-// These tests verify MCP audience annotation compliance:
-//   content[0] audience=['assistant'] — only tokens, no real names → safe for AI context
-//   content[1] audience=['user']      — real names, no tokens → shown in client UI
+// These tests verify the single-block blinding contract:
+//   - Only ONE content block is returned (blinded JSON, audience=['assistant'])
+//   - No user-audience block (prevents MCP clients from displaying/forwarding real names)
+//   - The block contains only [STUDENT_NNN] tokens, no real PII
 //
-// If these tests pass, the MCP client can be verified correct: a client that properly
-// filters audience annotations will expose only blinded data to the model, while the
-// user sees the full unblinded view. Failure indicates a regression in the blinding
-// contract that could result in PII being sent to the AI model.
+// Removing the user-audience block is intentional: MCP clients that do not filter
+// by audience annotation (e.g. Gemini CLI) would display AND pass real names to
+// the model, defeating the blinding entirely. Clients wanting real names should
+// use an after_model hook or call student_pii(action='resolve').
 
 describe('FERPA blinding — MCP protocol compliance', () => {
   beforeEach(() => {
@@ -913,50 +889,19 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     )
   })
 
-  it('content[0] has audience=[assistant] and contains only tokens, no real names', async () => {
+  it('exactly one content block with audience=[assistant], tokens only, no real names', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class' } })
-    const block = getContent(result)[0]
+    const blocks = getContent(result)
 
-    expect(block.annotations?.audience).toEqual(['assistant'])
-    expect(block.text).toMatch(/\[STUDENT_\d{3}\]/)
-    expect(block.text).not.toContain('Jane Smith')
-    expect(block.text).not.toContain('Bob Adams')
-    expect(() => JSON.parse(block.text)).not.toThrow()
-  })
-
-  it('content[1] has audience=[user] and contains real names, no tokens', async () => {
-    const configPath = makeTmpConfigPath()
-    writeConfig(configPath)
-    const { mcpClient } = await makeTestClient(configPath)
-    const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class' } })
-    const block = getContent(result)[1]
-
-    expect(block.annotations?.audience).toEqual(['user'])
-    expect(block.text).toContain('Jane Smith')
-    expect(block.text).toContain('Bob Adams')
-    expect(block.text).not.toMatch(/\[STUDENT_\d{3}\]/)
-    expect(() => JSON.parse(block.text)).not.toThrow()
-  })
-
-  it('content[1] has identical structure to content[0] — only student field differs', async () => {
-    const configPath = makeTmpConfigPath()
-    writeConfig(configPath)
-    const { mcpClient } = await makeTestClient(configPath)
-    const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class' } })
-    const blinded = parseBlindedResult(result)
-    const unblinded = parseUserResult(result)
-
-    expect(Object.keys(unblinded)).toEqual(Object.keys(blinded))
-    expect(unblinded.students).toHaveLength(blinded.students.length)
-    expect(Object.keys(unblinded.students[0])).toEqual(Object.keys(blinded.students[0]))
-    // Numeric fields are identical — only the `student` field differs
-    expect(unblinded.students[0].current_score).toBe(blinded.students[0].current_score)
-    expect(unblinded.students[0].missing_count).toBe(blinded.students[0].missing_count)
-    expect(unblinded.students[0].student).not.toMatch(/\[STUDENT_\d{3}\]/)
-    expect(blinded.students[0].student).toMatch(/\[STUDENT_\d{3}\]/)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].annotations?.audience).toEqual(['assistant'])
+    expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
+    expect(blocks[0].text).not.toContain('Jane Smith')
+    expect(blocks[0].text).not.toContain('Bob Adams')
+    expect(() => JSON.parse(blocks[0].text)).not.toThrow()
   })
 
   it('no content block targets both assistant and user simultaneously', async () => {
@@ -973,7 +918,7 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     }
   })
 
-  it('get_submission_status: content[0] blinded, content[1] unblinded', async () => {
+  it('get_submission_status: single blinded block, no real names', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     mswServer.use(
@@ -989,16 +934,14 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const result = await mcpClient.callTool({ name: 'get_submission_status', arguments: { type: 'missing' } })
     const blocks = getContent(result)
 
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toEqual(['assistant'])
-    expect(blocks[1].annotations?.audience).toEqual(['user'])
     expect(blocks[0].text).not.toContain('Bob Adams')
-    expect(blocks[1].text).toContain('Bob Adams')
-    expect(blocks[1].text).not.toMatch(/\[STUDENT_\d{3}\]/)
+    expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
     expect(() => JSON.parse(blocks[0].text)).not.toThrow()
-    expect(() => JSON.parse(blocks[1].text)).not.toThrow()
   })
 
-  it('get_grades scope=assignment: content[0] blinded, content[1] unblinded', async () => {
+  it('get_grades scope=assignment: single blinded block, no real names', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     mswServer.use(
@@ -1013,15 +956,14 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'assignment', assignment_id: 501 } })
     const blocks = getContent(result)
 
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toEqual(['assistant'])
-    expect(blocks[1].annotations?.audience).toEqual(['user'])
     expect(blocks[0].text).not.toContain('Jane Smith')
-    expect(blocks[1].text).toContain('Jane Smith')
-    expect(blocks[1].text).not.toMatch(/\[STUDENT_\d{3}\]/)
-    expect(() => JSON.parse(blocks[1].text)).not.toThrow()
+    expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
+    expect(() => JSON.parse(blocks[0].text)).not.toThrow()
   })
 
-  it('get_grades scope=student: content[0] blinded, content[1] unblinded', async () => {
+  it('get_grades scope=student: single blinded block, no real names', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const store = new SecureStore()
@@ -1042,11 +984,11 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'student', student_token: janeToken } })
     const blocks = getContent(result)
 
+    expect(blocks).toHaveLength(1)
     expect(blocks[0].annotations?.audience).toEqual(['assistant'])
-    expect(blocks[1].annotations?.audience).toEqual(['user'])
     expect(blocks[0].text).not.toContain('Jane Smith')
-    expect(blocks[1].text).not.toMatch(/\[STUDENT_\d{3}\]/)
-    expect(() => JSON.parse(blocks[1].text)).not.toThrow()
+    expect(blocks[0].text).toMatch(janeToken)
+    expect(() => JSON.parse(blocks[0].text)).not.toThrow()
   })
 })
 
@@ -1066,11 +1008,14 @@ describe('Coverage gaps', () => {
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/enrollments`, () => HttpResponse.json(enrollments)),
       http.get(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/students/submissions`, () => HttpResponse.json(submissions))
     )
-    const { mcpClient, store } = await makeTestClient(configPath)
+    // Pre-tokenize to know which token maps to A Adams (user_id 1002)
+    const store = new SecureStore()
+    const adamsToken = store.tokenize(1002, 'A Adams')
+    const { mcpClient } = await makeTestClient(configPath, store)
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class', sort_by: 'zeros' } })
     // Both have 1 zero, so it should sort by name ASC. Adams first.
-    const userData = parseUserResult(result)
-    expect(userData.students[0].student).toBe('A Adams')
+    const data = parseBlindedResult(result)
+    expect(data.students[0].student).toBe(adamsToken)
   })
 
   it('get_grades(scope=student) handles non-CanvasApiError', async () => {

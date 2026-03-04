@@ -29,6 +29,10 @@ export interface CanvasTeacherConfig {
     minScore: number
     exitCardPoints: number
   }
+  privacy: {
+    blindingEnabled: boolean
+    sidecarPath: string
+  }
   smartSearch: {
     distanceThreshold: number
   }
@@ -64,6 +68,10 @@ export const DEFAULT_CONFIG: CanvasTeacherConfig = {
     completionRequirement: 'min_score',
     minScore: 1,
     exitCardPoints: 0.5,
+  },
+  privacy: {
+    blindingEnabled: false,
+    sidecarPath: '~/.cache/canvas-mcp/pii_session.json',
   },
   smartSearch: {
     distanceThreshold: 0.5,

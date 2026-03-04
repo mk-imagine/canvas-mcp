@@ -1,0 +1,12 @@
+{
+  "name": "@canvas-mcp/gemini-hooks",
+  "version": "0.1.0",
+  "description": "Gemini CLI hooks for canvas-mcp PII blinding/unblinding",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

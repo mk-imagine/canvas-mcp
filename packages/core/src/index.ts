@@ -2,6 +2,7 @@ export { CanvasClient, CanvasApiError } from './canvas/client.js'
 export { ConfigManager } from './config/manager.js'
 export type { CanvasTeacherConfig } from './config/schema.js'
 export { SecureStore } from './security/secure-store.js'
+export { SidecarManager } from './security/sidecar-manager.js'
 export { registerContextTools } from './tools/context.js'
 
 // canvas API functions

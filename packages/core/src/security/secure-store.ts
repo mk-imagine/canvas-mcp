@@ -1,4 +1,4 @@
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto'
+import { randomBytes, randomUUID, createCipheriv, createDecipheriv } from 'node:crypto'
 import { createRequire } from 'node:module'
 
 interface EncryptedEntry {
@@ -19,6 +19,7 @@ interface EncryptedEntry {
  * OpenSSL's internal crypto buffers.
  */
 export class SecureStore {
+  readonly sessionId: string
   private readonly sessionKey: Buffer
   private readonly map: Map<string, EncryptedEntry>
   private readonly idToToken: Map<number, string>
@@ -26,6 +27,7 @@ export class SecureStore {
   private readonly encounterOrder: string[]
 
   constructor() {
+    this.sessionId = randomUUID()
     this.sessionKey = randomBytes(32)
     this.map = new Map()
     this.idToToken = new Map()
