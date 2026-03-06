@@ -1,26 +1,10 @@
 /**
- * Gemini CLI AfterTool Hook — Final Production Version
+ * Gemini CLI AfterTool Hook
  *
  * PURPOSE:
  * 1. Parse tool outputs to generate a concise summary.
  * 2. Inject this summary as a 'systemMessage' to guide the model.
- * 3. Does NOT attempt to hide the raw JSON (as proven impossible).
  */
-
-import { appendFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir } from 'node:os'
-
-// --- Configuration ---
-const LOG_FILE = join(homedir(), 'aftertool-hook.log')
-
-// --- Debug Helper ---
-function log(message: string) {
-  try {
-    const timestamp = new Date().toISOString()
-    appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`)
-  } catch (e) {}
-}
 
 function buildSummary(toolName: string, data: Record<string, unknown>): string | null {
   // get_submission_status (Missing)
@@ -41,7 +25,7 @@ function buildSummary(toolName: string, data: Record<string, unknown>): string |
   }
   // get_assignments (Course filtered)
   if (Array.isArray(data['assignments']) && typeof data['course_id'] === 'number') {
-     return `Found ${data['assignments'].length} assignments for course ${data['course_id']}.`
+    return `Found ${data['assignments'].length} assignments for course ${data['course_id']}.`
   }
   // Generic Fallback for Lists
   if (Array.isArray(data['items'])) {
@@ -57,10 +41,10 @@ async function main() {
   }
   const raw = Buffer.concat(chunks).toString('utf-8')
 
-  let hookInput: Record<string, any>
+  let hookInput: Record<string, unknown>
   try {
     hookInput = JSON.parse(raw)
-  } catch (e) {
+  } catch {
     process.stdout.write('{}')
     return
   }
@@ -71,34 +55,29 @@ async function main() {
     return
   }
 
-  // Extract inner JSON
-  const textPayload = hookInput.tool_response?.llmContent?.[0]?.text
+  const textPayload = (hookInput.tool_response as Record<string, unknown>)?.llmContent?.[0]?.text
   if (!textPayload) {
     process.stdout.write('{}')
     return
   }
 
   try {
-    const data = JSON.parse(textPayload)
-    const summary = buildSummary(toolName, data)
+    const data = JSON.parse(textPayload as string)
+    const summary = buildSummary(toolName as string, data)
 
     if (summary) {
-      log(`[SUMMARY] ${toolName}: ${summary}`)
-      // Return the system message to help the model
       process.stdout.write(JSON.stringify({
         systemMessage: `[canvas-mcp] ${summary}`
       }))
     } else {
       process.stdout.write('{}')
     }
-
-  } catch (e) {
-    // If parsing fails, just do nothing
+  } catch {
     process.stdout.write('{}')
   }
 }
 
 main().catch((err) => {
-  log(`FATAL ERROR: ${(err as Error).message}`)
+  process.stderr.write(`[canvas-mcp/after_tool] Error: ${(err as Error).message}\n`)
   process.exit(1)
 })
