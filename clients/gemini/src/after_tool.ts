@@ -1,84 +1,101 @@
 /**
- * Gemini CLI AfterTool Hook - Step 1: Deep Inspection & Heartbeat
+ * Gemini CLI AfterTool Hook — Final Production Version
  *
  * PURPOSE:
- * 1. Capture the exact JSON schema coming from the CLI during a tool use event.
- * 2. Dump full raw input to '~/.cache/canvas-mcp/last_tool_input.json'.
- * 3. Log execution flow to 'aftertool-hook-test.txt'.
- * 4. Return no-op ({}) to ensure the CLI continues functioning.
+ * 1. Parse tool outputs to generate a concise summary.
+ * 2. Inject this summary as a 'systemMessage' to guide the model.
+ * 3. Does NOT attempt to hide the raw JSON (as proven impossible).
  */
 
-import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
 // --- Configuration ---
-const CACHE_DIR = join(homedir(), '.cache', 'canvas-mcp')
-const LOG_FILE = join(homedir(), 'aftertool-hook-test.txt')
-const DUMP_FILE = join(CACHE_DIR, 'last_tool_input.json')
+const LOG_FILE = join(homedir(), 'aftertool-hook.log')
 
 // --- Debug Helper ---
 function log(message: string) {
   try {
     const timestamp = new Date().toISOString()
     appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`)
-  } catch (e) {
-    // If logging fails, we can't do much, but we shouldn't crash the hook
+  } catch (e) {}
+}
+
+function buildSummary(toolName: string, data: Record<string, unknown>): string | null {
+  // get_submission_status (Missing)
+  if (typeof data['total_missing_submissions'] === 'number') {
+    return `Found ${data['total_missing_submissions']} missing submissions.`
   }
+  // get_submission_status (Late)
+  if (typeof data['total_late_submissions'] === 'number') {
+    return `Found ${data['total_late_submissions']} late submissions.`
+  }
+  // get_grades (Class Overview)
+  if (typeof data['student_count'] === 'number') {
+    return `Fetched grades for ${data['student_count']} students.`
+  }
+  // get_grades (Specific Student)
+  if (Array.isArray(data['assignments']) && typeof data['student_token'] === 'string') {
+    return `Fetched ${data['assignments'].length} assignments for ${data['student_token']}.`
+  }
+  // get_assignments (Course filtered)
+  if (Array.isArray(data['assignments']) && typeof data['course_id'] === 'number') {
+     return `Found ${data['assignments'].length} assignments for course ${data['course_id']}.`
+  }
+  // Generic Fallback for Lists
+  if (Array.isArray(data['items'])) {
+    return `Retrieved ${data['items'].length} items.`
+  }
+  return null
 }
 
 async function main() {
-  // 1. Read all input from stdin
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
     chunks.push(chunk as Buffer)
   }
   const raw = Buffer.concat(chunks).toString('utf-8')
 
-  // 2. Dump raw input for schema inspection
+  let hookInput: Record<string, any>
   try {
-    // Ensure dir exists
-    mkdirSync(CACHE_DIR, { recursive: true })
-    writeFileSync(DUMP_FILE, raw, 'utf-8')
-    log(`[DEBUG] Dumped raw input to ${DUMP_FILE}`)
-    log(`[DEBUG] Input size: ${raw.length} bytes`)
+    hookInput = JSON.parse(raw)
   } catch (e) {
-    log(`[ERROR] Failed to dump input: ${(e as Error).message}`)
+    process.stdout.write('{}')
+    return
   }
 
-  // 3. Parse and Log specific fields (Heartbeat)
+  const toolName = hookInput.tool_name
+  if (!toolName) {
+    process.stdout.write('{}')
+    return
+  }
+
+  // Extract inner JSON
+  const textPayload = hookInput.tool_response?.llmContent?.[0]?.text
+  if (!textPayload) {
+    process.stdout.write('{}')
+    return
+  }
+
   try {
-    if (!raw.trim()) {
-      log(`[WARNING] Received empty input`)
-      process.stdout.write('{}')
-      return
-    }
+    const data = JSON.parse(textPayload)
+    const summary = buildSummary(toolName, data)
 
-    const hookInput = JSON.parse(raw)
-    
-    // Log top-level keys to understand the envelope
-    log(`[SCHEMA] Keys: ${Object.keys(hookInput).join(', ')}`)
-
-    // Log the Tool Name if present (Validation)
-    if (hookInput.tool_name) {
-      log(`[TOOL DETECTED] Name: "${hookInput.tool_name}"`)
+    if (summary) {
+      log(`[SUMMARY] ${toolName}: ${summary}`)
+      // Return the system message to help the model
+      process.stdout.write(JSON.stringify({
+        systemMessage: `[canvas-mcp] ${summary}`
+      }))
     } else {
-      log(`[WARNING] No 'tool_name' field found.`)
-    }
-    
-    // Log the structure of the tool response/result
-    if (hookInput.tool_response) {
-      const type = Array.isArray(hookInput.tool_response) ? 'array' : typeof hookInput.tool_response
-      log(`[TOOL RESPONSE] Type: ${type}`)
-      log(`[TOOL RESPONSE] Preview: ${JSON.stringify(hookInput.tool_response).slice(0, 150)}...`)
+      process.stdout.write('{}')
     }
 
   } catch (e) {
-    log(`[ERROR] JSON Parse failed: ${(e as Error).message}`)
+    // If parsing fails, just do nothing
+    process.stdout.write('{}')
   }
-
-  // 4. Return Safe No-Op
-  process.stdout.write('{}')
 }
 
 main().catch((err) => {
