@@ -1,30 +1,41 @@
 /**
- * Gemini CLI after_model hook — output unblinding.
+ * Instrumented Buffered AfterModel Hook.
  *
- * Reads the PII sidecar and replaces [STUDENT_NNN] tokens in the model's
- * response with real student names before displaying to the user.
- *
- * The hook must return:
- *   { hookSpecificOutput: { hookEventName: "AfterModel", llm_response: <modified> } }
- *
- * Returning the whole input object (as an earlier version did) is ignored by
- * Gemini CLI — only the hookSpecificOutput wrapper triggers actual replacement.
+ * Logic: Buffers partial tokens to handle stream splitting.
+ * Debug: Logs buffer usage and replacements to 'aftermodel-hook-test.txt'.
  */
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
+// --- Configuration ---
 const DEFAULT_SIDECAR_PATH = join(homedir(), '.cache', 'canvas-mcp', 'pii_session.json')
+const BUFFER_PATH = join(homedir(), '.cache', 'canvas-mcp', 'pii_buffer.txt')
+const LOG_FILE = join(homedir(), 'aftermodel-hook-test.txt')
+
 const sidecarPath = process.env['CANVAS_MCP_SIDECAR_PATH'] ?? DEFAULT_SIDECAR_PATH
 
+// Regex to find complete tokens for replacement
 const TOKEN_PATTERN = /\[STUDENT_\d{3}\]/g
 
+// Regex to find PARTIAL tokens at the end of a string to buffer.
+// Matches any prefix of a token that appears at the very end of the string.
+const PARTIAL_PATTERN = /\[(?:S(?:T(?:U(?:D(?:E(?:N(?:T(?:_(?:\d{0,3})?)?)?)?)?)?)?)?)?$/
+
 interface SidecarFile {
-  session_id: string
-  last_updated: string
   mapping: Record<string, string>
 }
+
+// --- Debug Helper ---
+function log(message: string) {
+  try {
+    const timestamp = new Date().toISOString()
+    appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`)
+  } catch (e) {}
+}
+
+// --- Helpers ---
 
 function loadMapping(): Record<string, string> | null {
   if (!existsSync(sidecarPath)) return null
@@ -36,12 +47,64 @@ function loadMapping(): Record<string, string> | null {
   }
 }
 
-function unblindText(text: string, mapping: Record<string, string>): string {
-  return text.replaceAll(TOKEN_PATTERN, (token) => mapping[token] ?? token)
+function loadBuffer(): string {
+  if (!existsSync(BUFFER_PATH)) return ''
+  try {
+    const buf = readFileSync(BUFFER_PATH, 'utf-8')
+    if (buf.length > 0) {
+      log(`[BUFFER LOAD] Prepending buffered content: "${buf}"`)
+    }
+    return buf
+  } catch {
+    return ''
+  }
+}
+
+function saveBuffer(content: string) {
+  try {
+    if (content.length > 0) {
+      log(`[BUFFER SAVE] Storing partial token: "${content}"`)
+    }
+    writeFileSync(BUFFER_PATH, content, 'utf-8')
+  } catch {
+    // silently fail
+  }
+}
+
+function unblindString(text: string, mapping: Record<string, string>): string {
+  // 1. Prepend buffer from previous chunk
+  const buffer = loadBuffer()
+  let combined = buffer + text
+
+  // 2. Perform Replacement on the combined text
+  combined = combined.replaceAll(TOKEN_PATTERN, (token) => {
+    const val = mapping[token]
+    if (val) {
+      log(`[REPLACE] Success: ${token} -> ${val}`)
+      return val
+    }
+    log(`[MISSING] No mapping for ${token}`)
+    return token
+  })
+
+  // 3. Check for new partial token at the end
+  const match = combined.match(PARTIAL_PATTERN)
+  let newBuffer = ''
+  let finalOutput = combined
+
+  if (match && match[0].length > 0) {
+    newBuffer = match[0]
+    finalOutput = combined.slice(0, -newBuffer.length)
+  }
+
+  // 4. Save new buffer for next turn
+  saveBuffer(newBuffer)
+
+  return finalOutput
 }
 
 function unblindValue(value: unknown, mapping: Record<string, string>): unknown {
-  if (typeof value === 'string') return unblindText(value, mapping)
+  if (typeof value === 'string') return unblindString(value, mapping)
   if (Array.isArray(value)) return value.map((v) => unblindValue(v, mapping))
   if (value !== null && typeof value === 'object') {
     const result: Record<string, unknown> = {}
@@ -60,13 +123,6 @@ async function main() {
   }
   const raw = Buffer.concat(chunks).toString('utf-8')
 
-  const mapping = loadMapping()
-  if (mapping === null) {
-    // No sidecar — no tokens to unblind, pass through as no-op
-    process.stdout.write('{}')
-    return
-  }
-
   let hookInput: Record<string, unknown>
   try {
     hookInput = JSON.parse(raw)
@@ -81,13 +137,13 @@ async function main() {
     return
   }
 
-  const unblindedResponse = unblindValue(llmResponse, mapping)
-
-  // If nothing changed, return a no-op
-  if (JSON.stringify(llmResponse) === JSON.stringify(unblindedResponse)) {
+  const mapping = loadMapping()
+  if (mapping === null) {
     process.stdout.write('{}')
     return
   }
+
+  const unblindedResponse = unblindValue(llmResponse, mapping)
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -98,6 +154,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`[canvas-mcp/after_model] Error: ${(err as Error).message}\n`)
+  log(`FATAL ERROR: ${(err as Error).message}`)
   process.exit(1)
 })

@@ -1,23 +1,22 @@
 /**
- * Gemini CLI before_model hook — input blinding.
- *
- * Reads the PII sidecar and replaces real student names in the outgoing LLM
- * request with their session tokens. If the sidecar does not yet exist (no
- * canvas-mcp tool call has been made this session), the request is passed
- * through unchanged.
- *
- * The hook must return:
- *   { hookSpecificOutput: { hookEventName: "BeforeModel", llm_request: <modified> } }
- *
- * Returning the whole input object (as an earlier version did) is ignored by
- * Gemini CLI — only the hookSpecificOutput wrapper triggers actual replacement.
+ * Debug-Instrumented BeforeModel Hook
  */
-
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
+// Debug Setup
+const LOG_FILE = join(homedir(), 'beforemodel-hook-test.txt')
+function log(message: string) {
+  try {
+    const timestamp = new Date().toISOString()
+    appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`)
+  } catch (e) {
+    // Ignore logging errors to prevent breaking the hook
+  }
+}
 
+// Original Logic Constants
 const DEFAULT_SIDECAR_PATH = join(homedir(), '.cache', 'canvas-mcp', 'pii_session.json')
 const sidecarPath = process.env['CANVAS_MCP_SIDECAR_PATH'] ?? DEFAULT_SIDECAR_PATH
 
@@ -28,11 +27,18 @@ interface SidecarFile {
 }
 
 function loadMapping(): Record<string, string> | null {
-  if (!existsSync(sidecarPath)) return null
+  log(`Attempting to load sidecar from: ${sidecarPath}`)
+  if (!existsSync(sidecarPath)) {
+    log('Sidecar file does not exist.')
+    return null
+  }
   try {
-    const data = JSON.parse(readFileSync(sidecarPath, 'utf-8')) as SidecarFile
+    const content = readFileSync(sidecarPath, 'utf-8')
+    const data = JSON.parse(content) as SidecarFile
+    log(`Sidecar loaded. Mapping keys: ${Object.keys(data.mapping).length}`)
     return data.mapping
-  } catch {
+  } catch (e) {
+    log(`Error reading sidecar: ${(e as Error).message}`)
     return null
   }
 }
@@ -40,7 +46,6 @@ function loadMapping(): Record<string, string> | null {
 function blindText(text: string, mapping: Record<string, string>): string {
   let result = text
   for (const [key, value] of Object.entries(mapping)) {
-    // Only replace name→token pairs (skip token→name pairs)
     if (!key.startsWith('[STUDENT_')) {
       result = result.replaceAll(key, value)
     }
@@ -62,15 +67,18 @@ function blindValue(value: unknown, mapping: Record<string, string>): unknown {
 }
 
 async function main() {
+  log('--- Hook Started ---')
+  
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
     chunks.push(chunk as Buffer)
   }
   const raw = Buffer.concat(chunks).toString('utf-8')
+  log(`Received input size: ${raw.length}`)
 
   const mapping = loadMapping()
   if (mapping === null) {
-    // No sidecar yet — no names to blind, pass through as no-op
+    log('No mapping available. Passing through.')
     process.stdout.write('{}')
     return
   }
@@ -78,29 +86,32 @@ async function main() {
   let hookInput: Record<string, unknown>
   try {
     hookInput = JSON.parse(raw)
-  } catch {
+  } catch (e) {
+    log(`JSON Parse Error: ${(e as Error).message}`)
     process.stdout.write('{}')
     return
   }
 
   const llmRequest = hookInput['llm_request']
   if (llmRequest === undefined) {
+    log('No llm_request found in input.')
     process.stdout.write('{}')
     return
   }
 
   const blindedRequest = blindValue(llmRequest, mapping)
 
-  // If nothing changed, return a no-op so Gemini uses the original request unchanged
   const originalJson = JSON.stringify(llmRequest)
   const blindedJson = JSON.stringify(blindedRequest)
   const changed = originalJson !== blindedJson
 
   if (!changed) {
+    log('No PII found to blind. Passing through.')
     process.stdout.write('{}')
     return
   }
 
+  log('PII detected and blinded. Sending modified request.')
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'BeforeModel',
@@ -110,6 +121,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  log(`FATAL ERROR: ${(err as Error).message}`)
   process.stderr.write(`[canvas-mcp/before_model] Error: ${(err as Error).message}\n`)
   process.exit(1)
 })

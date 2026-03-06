@@ -1,0 +1,75 @@
+{
+	"security": {
+		"auth": {
+			"selectedType": "oauth-personal"
+		}
+	},
+	"ui": {
+		"footer": {
+			"hideContextPercentage": false
+		},
+		"showMemoryUsage": true,
+		"showLineNumbers": true,
+		"showCitations": true,
+		"compactToolOutputs": true
+	},
+	"general": {
+		"previewFeatures": true,
+		"sessionRetention": {
+			"warningAcknowledged": true,
+			"enabled": true,
+			"maxAge": "30d"
+		}
+	},
+	"output": {
+		"format": "text"
+	},
+	"mcpServers": {
+		"semantic_scholar": {
+			"command": "uv",
+			"args": [
+				"run",
+				"--directory",
+				"/Users/mark/Repos/semantic-scholar-mcp/",
+				"semantic-scholar-mcp",
+				"serve"
+			],
+			"env": {
+				"SEMANTIC_SCHOLAR_API_KEY": "ss_api_key"
+			}
+		},
+		"canvas-mcp": {
+			"command": "node",
+			"args": [
+				"--secure-heap=65536",
+				"/Users/mark/Repos/canvas-mcp/packages/teacher/dist/index.js"
+			]
+		}
+	},
+	"hooks": {
+		"BeforeModel": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/before_model.js",
+						"name": "canvas-mcp: blind student names in prompt",
+						"timeout": 5000
+					}
+				]
+			}
+		],
+		"AfterModel": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/after_model.js",
+						"name": "canvas-mcp: unblind student names in response",
+						"timeout": 5000
+					}
+				]
+			}
+		]
+	}
+}
