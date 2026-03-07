@@ -181,6 +181,31 @@ If you use a custom location, replace `~/.config/mcp/canvas-mcp` with your chose
 
 The `~/.config/mcp/canvas-mcp/config.json` file created in step 6 is shared across all clients — you only configure it once.
 
+**NOTE:** Gemini-CLI is the preferred client at this point because it is one of the only clients out there which allows for seamless PII blinding to the LLM and unblinding to the console window.  If there are other clients that support this feature, I am not aware of them.
+
+<details>
+<summary><a id="gemini-cli-googles-gemini-cli"></a>Gemini CLI (Google's <code>gemini</code> CLI)</summary>
+
+Edit `~/.gemini/settings.json` (create it if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "canvas-mcp": {
+      "command": "node",
+      "args": ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js"]
+    }
+  }
+}
+```
+
+If you have other servers already configured, add the `"canvas-mcp"` entry inside the existing `"mcpServers"` object. Restart Gemini CLI after saving.
+
+To limit the server to a single project instead of all sessions, place the same JSON in `.gemini/settings.json` inside that project's folder.
+
+**Hooks (PII blinding):** To enable automatic student-name blinding in Gemini CLI — so real names never reach the model — set up the canvas-mcp hooks. See [clients/gemini/SETUP.md](clients/gemini/SETUP.md) for step-by-step instructions.
+</details>
+
 <details>
 <summary><a id="claude-desktop"></a>Claude Desktop</summary>
 
@@ -229,29 +254,6 @@ Verify the server was added:
 ```bash
 claude mcp list
 ```
-</details>
-
-<details>
-<summary><a id="gemini-cli-googles-gemini-cli"></a>Gemini CLI (Google's <code>gemini</code> CLI)</summary>
-
-Edit `~/.gemini/settings.json` (create it if it doesn't exist):
-
-```json
-{
-  "mcpServers": {
-    "canvas-mcp": {
-      "command": "node",
-      "args": ["--secure-heap=65536", "/path/to/canvas-mcp/packages/teacher/dist/index.js"]
-    }
-  }
-}
-```
-
-If you have other servers already configured, add the `"canvas-mcp"` entry inside the existing `"mcpServers"` object. Restart Gemini CLI after saving.
-
-To limit the server to a single project instead of all sessions, place the same JSON in `.gemini/settings.json` inside that project's folder.
-
-**Hooks (PII blinding):** To enable automatic student-name blinding in Gemini CLI — so real names never reach the model — set up the canvas-mcp hooks. See [clients/gemini/SETUP.md](clients/gemini/SETUP.md) for step-by-step instructions.
 </details>
 
 <details>
