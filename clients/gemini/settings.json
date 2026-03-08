@@ -29,7 +29,7 @@
 			"command": "node",
 			"args": [
 				"--secure-heap=65536",
-				"/Users/mark/Repos/canvas-mcp/packages/teacher/dist/index.js"
+				"/Users/mark/Repos/personal/canvas-mcp/packages/teacher/dist/index.js"
 			]
 		}
 	},
@@ -39,7 +39,7 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/before_model.js",
+						"command": "node /Users/mark/Repos/personal/canvas-mcp/clients/gemini/dist/before_model.js",
 						"name": "canvas-mcp: blind student names in prompt",
 						"timeout": 5000
 					}
@@ -51,7 +51,7 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/after_model.js",
+						"command": "node /Users/mark/Repos/personal/canvas-mcp/clients/gemini/dist/after_model.js",
 						"name": "canvas-mcp: unblind student names in response",
 						"timeout": 5000
 					}
@@ -63,7 +63,7 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "node /Users/mark/Repos/canvas-mcp/clients/gemini/dist/after_tool.js",
+						"command": "node /Users/mark/Repos/personal/canvas-mcp/clients/gemini/dist/after_tool.js",
 						"name": "canvas-mcp: progress indicator",
 						"timeout": 5000
 					}

@@ -13,7 +13,8 @@
     "test:integration:coverage": "node --no-warnings node_modules/vitest/vitest.mjs run --coverage --config tests/vitest.config.ts",
     "test:coverage": "npm run test:unit:coverage && npm run test:integration:coverage",
     "seed": "tsx scripts/seed-test-data.ts",
-    "count-tokens": "tsx scripts/count-tokens.ts"
+    "count-tokens": "tsx scripts/count-tokens.ts",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -25,6 +26,7 @@
     "istanbul-merge": "^2.0.0",
     "msw": "^2.0.0",
     "nyc": "^18.0.0",
+    "patch-package": "^8.0.1",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0"

@@ -2,6 +2,7 @@ dist/
 .env
 .env.test
 *.js.map
+tmp/
 
 # Obsolete PLanning Docs
 PLANNING.md

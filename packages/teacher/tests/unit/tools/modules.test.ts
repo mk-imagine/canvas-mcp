@@ -161,9 +161,9 @@ function getText(result: Awaited<ReturnType<Client['callTool']>>) {
   return (result.content as Array<{ type: string; text: string }>)[0].text
 }
 
-// ─── build_module template='lesson' ──────────────────────────────────────────
+// ─── build_module (lesson) ────────────────────────────────────────────────────
 
-describe('build_module — template="lesson"', () => {
+describe('build_module (lesson)', () => {
   it('dry_run returns items_preview without Canvas API calls', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -350,9 +350,9 @@ describe('build_module — template="lesson"', () => {
   })
 })
 
-// ─── build_module template='solution' ────────────────────────────────────────
+// ─── build_module (solution) ──────────────────────────────────────────────────
 
-describe('build_module — template="solution"', () => {
+describe('build_module (solution)', () => {
   it('creates module with prerequisite and ExternalUrl items', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -443,9 +443,9 @@ describe('build_module — template="solution"', () => {
   })
 })
 
-// ─── build_module template='clone' ───────────────────────────────────────────
+// ─── build_module (clone) ─────────────────────────────────────────────────────
 
-describe('build_module — template="clone"', () => {
+describe('build_module (clone)', () => {
   const SOURCE_COURSE_ID = 2
   const SOURCE_MODULE_ID = 99
 

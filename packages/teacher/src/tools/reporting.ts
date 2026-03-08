@@ -81,13 +81,13 @@ export function registerReportingTools(
     {
       description: 'Get a module\'s full item list including types, titles, points, due dates, and optionally assignment description HTML.',
       inputSchema: z.object({
-        module_id: z.number().int().positive().optional()
+        module_id: z.number().optional()
           .describe('Canvas module ID. Provide this or module_name.'),
         module_name: z.string().optional()
           .describe('Module name to search for (case-insensitive partial match). Provide this or module_id.'),
         include_html: z.boolean().optional()
           .describe('Fetch raw description HTML for assignment items. Default: false.'),
-        course_id: z.number().int().positive().optional()
+        course_id: z.number().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
     },
@@ -183,31 +183,20 @@ export function registerReportingTools(
         'scope="student" — one student\'s full submission history across all assignments.',
         'Results are FERPA-blinded: real names replaced with [STUDENT_NNN] tokens.',
       ].join(' '),
-      inputSchema: z.discriminatedUnion('scope', [
-        z.object({
-          scope: z.literal('class'),
-          sort_by: z.enum(['name', 'engagement', 'grade', 'zeros']).optional()
-            .describe('Sort order. "name": alphabetical (default). "engagement": missing DESC, late DESC. "grade": score ASC. "zeros": zero-score count DESC.'),
-          assignment_group_id: z.number().int().positive().optional()
-            .describe('Filter submission counts to a specific assignment group.'),
-          course_id: z.number().int().positive().optional()
-            .describe('Canvas course ID. Defaults to active course.'),
-        }),
-        z.object({
-          scope: z.literal('assignment'),
-          assignment_id: z.number().int().positive()
-            .describe('Canvas assignment ID'),
-          course_id: z.number().int().positive().optional()
-            .describe('Canvas course ID. Defaults to active course.'),
-        }),
-        z.object({
-          scope: z.literal('student'),
-          student_token: z.string()
-            .describe('Session token from get_grades(scope="class") (e.g. "[STUDENT_001]")'),
-          course_id: z.number().int().positive().optional()
-            .describe('Canvas course ID. Defaults to active course.'),
-        }),
-      ]),
+      inputSchema: z.object({
+        scope: z.enum(['class', 'assignment', 'student'])
+          .describe('Scope of grade data: "class" (all students), "assignment" (one assignment), "student" (one student\'s history).'),
+        sort_by: z.enum(['name', 'engagement', 'grade', 'zeros']).optional()
+          .describe('For scope="class": sort order. "name": alphabetical (default). "engagement": missing DESC. "grade": score ASC. "zeros": zero-score count DESC.'),
+        assignment_group_id: z.number().optional()
+          .describe('For scope="class": filter submission counts to a specific assignment group.'),
+        assignment_id: z.number().optional()
+          .describe('For scope="assignment": Canvas assignment ID (required).'),
+        student_token: z.string().optional()
+          .describe('For scope="student": session token from get_grades(scope="class"), e.g. "[STUDENT_001]" (required).'),
+        course_id: z.number().optional()
+          .describe('Canvas course ID. Defaults to active course.'),
+      }),
     },
     async (args) => {
       const config = configManager.read()
@@ -331,8 +320,8 @@ export function registerReportingTools(
         const blindingEnabled = config.privacy.blindingEnabled
 
         const [assignment, submissions] = await Promise.all([
-          fetchAssignment(client, courseId, args.assignment_id),
-          fetchAssignmentSubmissions(client, courseId, args.assignment_id),
+          fetchAssignment(client, courseId, args.assignment_id!),
+          fetchAssignmentSubmissions(client, courseId, args.assignment_id!),
         ])
 
         const submissionRows = submissions
@@ -419,7 +408,7 @@ export function registerReportingTools(
           return toolError('get_grades(scope="student") requires blinding to be enabled. Enable privacy.blindingEnabled in config.')
         }
 
-        const resolved = secureStore.resolve(args.student_token)
+        const resolved = secureStore.resolve(args.student_token!)
         if (!resolved) {
           return toolError(`Unknown student token: ${args.student_token}`)
         }
@@ -474,7 +463,7 @@ export function registerReportingTools(
         const total_graded = submissions.filter((s) => s.score !== null).length
 
         return blindedResponse({
-          student_token: args.student_token,
+          student_token: args.student_token!,
           current_score: enrollment.grades.current_score,
           final_score: enrollment.grades.final_score,
           assignments,
@@ -508,7 +497,7 @@ export function registerReportingTools(
           .describe('Filter type: "missing" (unsubmitted past due) or "late" (submitted after due date)'),
         since_date: z.string().optional()
           .describe('Only for type="missing": only include assignments with due_at after this ISO 8601 date.'),
-        course_id: z.number().int().positive().optional()
+        course_id: z.number().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
     },
@@ -712,20 +701,16 @@ export function registerReportingTools(
         'action="list" — list all student session tokens encountered this session.',
         '  Result is visible to the assistant only.',
       ].join(' '),
-      inputSchema: z.discriminatedUnion('action', [
-        z.object({
-          action: z.literal('resolve'),
-          student_token: z.string()
-            .describe('Session token such as "[STUDENT_001]"'),
-        }),
-        z.object({
-          action: z.literal('list'),
-        }),
-      ]),
+      inputSchema: z.object({
+        action: z.enum(['resolve', 'list'])
+          .describe('Action: "resolve" reveals real name/Canvas ID for a token (user-only output). "list" returns all session tokens (assistant-only output).'),
+        student_token: z.string().optional()
+          .describe('For action="resolve": session token such as "[STUDENT_001]" (required).'),
+      }),
     },
     async (args) => {
       if (args.action === 'resolve') {
-        const resolved = secureStore.resolve(args.student_token)
+        const resolved = secureStore.resolve(args.student_token!)
         if (!resolved) {
           return toolError(`Unknown student token: ${args.student_token}`)
         }
@@ -734,7 +719,7 @@ export function registerReportingTools(
             {
               type: 'text' as const,
               text: JSON.stringify({
-                student_token: args.student_token,
+                student_token: args.student_token!,
                 name: resolved.name,
                 canvas_id: resolved.canvasId,
               }, null, 2),

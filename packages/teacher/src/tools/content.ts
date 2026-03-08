@@ -43,7 +43,7 @@ export function registerContentTools(
     {
       description: 'Permanently delete a file. Warning: this is irreversible — Canvas has no trash bin for files.',
       inputSchema: z.object({
-        file_id: z.number().int().positive()
+        file_id: z.number()
           .describe('Canvas file ID'),
       }),
     },
@@ -66,7 +66,7 @@ export function registerContentTools(
           .describe('Display name for the file in Canvas. Defaults to the local filename.'),
         folder_path: z.string().optional()
           .describe('Canvas folder path (e.g. "course files/week1"). Defaults to root.'),
-        course_id: z.number().int().positive().optional()
+        course_id: z.number().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
     },
@@ -112,7 +112,7 @@ export function registerContentTools(
       inputSchema: z.object({
         title: z.string()
           .describe('Rubric title'),
-        assignment_id: z.number().int().positive()
+        assignment_id: z.number()
           .describe('Canvas assignment ID to associate the rubric with.'),
         criteria: z.array(z.object({
           description: z.string()
@@ -130,7 +130,7 @@ export function registerContentTools(
           .describe('Rubric criteria with nested ratings'),
         use_for_grading: z.boolean().optional()
           .describe('Use the rubric for grading. Defaults to true.'),
-        course_id: z.number().int().positive().optional()
+        course_id: z.number().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
     },

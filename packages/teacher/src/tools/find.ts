@@ -83,326 +83,165 @@ function resolveByName<T>(
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
-const findItemSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('page'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignment'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('quiz'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module_item'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    module_name: z.string().describe('Name of the module containing the item (case-insensitive partial match)'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('discussion'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('announcement'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('syllabus'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-])
+const findItemSchema = z.object({
+  type: z.enum(['page', 'assignment', 'quiz', 'module', 'module_item', 'discussion', 'announcement', 'syllabus'])
+    .describe('Item type to find'),
+  search: z.string().optional()
+    .describe('Case-insensitive partial title/name match. Required for all types except "syllabus".'),
+  module_name: z.string().optional()
+    .describe('For type="module_item": module name (case-insensitive partial match, required).'),
+  course_id: z.number().optional()
+    .describe('Canvas course ID. Defaults to active course.'),
+})
 
-const updateItemSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('page'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    title: z.string().optional().describe('New page title'),
-    body: z.string().optional().describe('New page body HTML'),
-    published: z.boolean().optional().describe('Published state'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignment'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    name: z.string().optional().describe('New assignment name'),
-    points_possible: z.number().positive().optional().describe('Points possible'),
-    due_at: z.string().nullable().optional().describe('Due date as ISO 8601, or null to clear'),
-    submission_types: z.array(z.string()).optional().describe('Submission types'),
-    assignment_group_id: z.number().int().positive().optional().describe('Assignment group ID'),
-    description: z.string().optional().describe('Assignment description HTML'),
-    published: z.boolean().optional().describe('Published state'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('quiz'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    title: z.string().optional().describe('New quiz title'),
-    quiz_type: z.enum(['practice_quiz', 'assignment', 'graded_survey', 'survey']).optional()
-      .describe('Quiz type'),
-    points_possible: z.number().positive().optional().describe('Points possible'),
-    due_at: z.string().nullable().optional().describe('Due date as ISO 8601, or null to clear'),
-    time_limit: z.number().int().positive().nullable().optional().describe('Time limit in minutes, or null to clear'),
-    allowed_attempts: z.number().int().optional().describe('Number of allowed attempts'),
-    published: z.boolean().optional().describe('Published state'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    name: z.string().optional().describe('New module name'),
-    published: z.boolean().optional().describe('Published state'),
-    unlock_at: z.string().nullable().optional().describe('Unlock date as ISO 8601, or null to clear'),
-    prerequisite_module_ids: z.array(z.number().int().positive()).optional()
-      .describe('Prerequisite module IDs'),
-    require_sequential_progress: z.boolean().optional()
-      .describe('Require sequential progress'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module_item'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    module_name: z.string().describe('Name of the module containing the item (case-insensitive partial match)'),
-    title: z.string().optional().describe('New item title'),
-    position: z.number().int().positive().optional().describe('New position in module'),
-    indent: z.number().int().nonnegative().optional().describe('Indent level (0–5)'),
-    completion_requirement: completionRequirementSchema,
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('syllabus'),
-    body: z.string().describe('New syllabus HTML. Pass empty string to clear.'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-])
+const updateItemSchema = z.object({
+  type: z.enum(['page', 'assignment', 'quiz', 'module', 'module_item', 'syllabus'])
+    .describe('Item type to update'),
+  search: z.string().optional()
+    .describe('Case-insensitive partial title/name match. Required for all types except "syllabus".'),
+  // page
+  body: z.string().optional()
+    .describe('For type="page": new page body HTML. For type="syllabus": new syllabus HTML, required (pass empty string to clear).'),
+  // assignment
+  name: z.string().optional()
+    .describe('For type="assignment" or "module": new name/title.'),
+  points_possible: z.number().positive().optional()
+    .describe('For type="assignment" or "quiz": points possible.'),
+  due_at: z.string().nullable().optional()
+    .describe('For type="assignment" or "quiz": due date as ISO 8601, or null to clear.'),
+  submission_types: z.array(z.string()).optional()
+    .describe('For type="assignment": submission types.'),
+  assignment_group_id: z.number().optional()
+    .describe('For type="assignment": assignment group ID.'),
+  description: z.string().optional()
+    .describe('For type="assignment": assignment description HTML.'),
+  // page + quiz + module_item
+  title: z.string().optional()
+    .describe('For type="page", "quiz", "module_item": new title.'),
+  // quiz
+  quiz_type: z.enum(['practice_quiz', 'assignment', 'graded_survey', 'survey']).optional()
+    .describe('For type="quiz": quiz type.'),
+  time_limit: z.number().int().positive().nullable().optional()
+    .describe('For type="quiz": time limit in minutes, or null to clear.'),
+  allowed_attempts: z.number().int().optional()
+    .describe('For type="quiz": number of allowed attempts.'),
+  // module
+  unlock_at: z.string().nullable().optional()
+    .describe('For type="module": unlock date as ISO 8601, or null to clear.'),
+  prerequisite_module_ids: z.array(z.number()).optional()
+    .describe('For type="module": prerequisite module IDs.'),
+  require_sequential_progress: z.boolean().optional()
+    .describe('For type="module": require sequential progress.'),
+  // module_item
+  module_name: z.string().optional()
+    .describe('For type="module_item": module name (case-insensitive partial match, required).'),
+  position: z.number().int().positive().optional()
+    .describe('For type="module_item": new position in module.'),
+  indent: z.number().int().nonnegative().optional()
+    .describe('For type="module_item": indent level (0–5).'),
+  completion_requirement: completionRequirementSchema,
+  // shared
+  published: z.boolean().optional()
+    .describe('Published state.'),
+  course_id: z.number().optional()
+    .describe('Canvas course ID. Defaults to active course.'),
+})
 
-const deleteItemSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('page'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignment'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('quiz'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module'),
-    search: z.string().describe('Case-insensitive partial name match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module_item'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    module_name: z.string().describe('Name of the module containing the item (case-insensitive partial match)'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('discussion'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('announcement'),
-    search: z.string().describe('Case-insensitive partial title match'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-])
+const deleteItemSchema = z.object({
+  type: z.enum(['page', 'assignment', 'quiz', 'module', 'module_item', 'discussion', 'announcement'])
+    .describe('Item type to delete'),
+  search: z.string().optional()
+    .describe('Case-insensitive partial title/name match (required).'),
+  module_name: z.string().optional()
+    .describe('For type="module_item": module name (case-insensitive partial match, required).'),
+  course_id: z.number().optional()
+    .describe('Canvas course ID. Defaults to active course.'),
+})
 
-const createItemSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('page'),
-    title: z.string().describe('Page title'),
-    body: z.string().optional().describe('Page body HTML'),
-    published: z.boolean().optional().describe('Publish immediately. Default false.'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignment'),
-    name: z.string().describe('Assignment title'),
-    points_possible: z.number().positive().optional()
-      .describe('Points possible. Defaults to config defaults.pointsPossible.'),
-    due_at: z.string().optional().describe('Due date as ISO 8601 string.'),
-    submission_types: z.array(z.string()).optional()
-      .describe('Submission types. Defaults to config defaults.submissionType.'),
-    assignment_group_id: z.number().int().positive().optional()
-      .describe('Assignment group ID.'),
-    description: z.string().optional()
-      .describe('Raw HTML description. If omitted and notebook_url is provided, rendered from template.'),
-    notebook_url: z.string().optional()
-      .describe('Google Colab notebook URL. Used to render description from template.'),
-    notebook_title: z.string().optional()
-      .describe('Link text for notebook URL in the rendered description.'),
-    instructions: z.string().optional()
-      .describe('Instructional text inserted into the rendered description.'),
-    published: z.boolean().optional().describe('Publish immediately. Default false.'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('quiz'),
-    title: z.string().optional().describe('Quiz title. Required unless use_exit_card_template=true.'),
-    quiz_type: z.enum(['practice_quiz', 'assignment', 'graded_survey', 'survey']).optional()
-      .describe('Quiz type.'),
-    points_possible: z.number().positive().optional().describe('Points possible.'),
-    due_at: z.string().optional().describe('Due date as ISO 8601 string.'),
-    time_limit: z.number().int().positive().optional().describe('Time limit in minutes.'),
-    allowed_attempts: z.number().int().optional().describe('Number of allowed attempts.'),
-    assignment_group_id: z.number().int().positive().optional(),
-    use_exit_card_template: z.boolean().optional()
-      .describe('Populate quiz title and questions from config exitCardTemplate.'),
-    week: z.number().int().positive().optional()
-      .describe('Week number substituted into the exit card title template.'),
-    questions: z.array(z.object({
-      question_name: z.string(),
-      question_text: z.string(),
-      question_type: z.string(),
-      points_possible: z.number().optional(),
-    })).optional().describe('Custom questions. Ignored when use_exit_card_template=true.'),
-    published: z.boolean().optional().describe('Publish immediately. Default false.'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('discussion'),
-    title: z.string().describe('Discussion title'),
-    message: z.string().optional().describe('Discussion body HTML'),
-    published: z.boolean().optional().describe('Publish immediately. Default false.'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('announcement'),
-    title: z.string().describe('Announcement title'),
-    message: z.string().optional().describe('Announcement body HTML'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module'),
-    name: z.string().describe('Module name'),
-    position: z.number().int().positive().optional().describe('Position in module list'),
-    published: z.boolean().optional().describe('Publish immediately. Default false.'),
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module_item'),
-    module_name: z.string().describe('Module name to add item to (case-insensitive partial match)'),
-    item_type: z.enum(['SubHeader', 'Page', 'Assignment', 'Quiz', 'ExternalUrl'])
-      .describe('Type of module item'),
-    title: z.string().describe('Module item title'),
-    content_id: z.number().int().positive().optional()
-      .describe('Canvas content ID (for Assignment, Quiz types)'),
-    page_url: z.string().optional()
-      .describe('Page URL slug (for Page type — use the url field from the page object)'),
-    external_url: z.string().optional()
-      .describe('External URL (for ExternalUrl type)'),
-    position: z.number().int().positive().optional().describe('Position in module'),
-    indent: z.number().int().nonnegative().optional().describe('Indent level (0–5)'),
-    new_tab: z.boolean().optional().describe('Open in new tab (for ExternalUrl)'),
-    completion_requirement: completionRequirementSchema,
-    dry_run: z.boolean().default(false).describe('Preview without calling Canvas'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-])
+const createItemSchema = z.object({
+  type: z.enum(['page', 'assignment', 'quiz', 'discussion', 'announcement', 'module', 'module_item'])
+    .describe('Item type to create'),
+  // page
+  title: z.string().optional()
+    .describe('For type="page" or "module_item": title (required). For type="quiz": optional (or use use_exit_card_template).'),
+  body: z.string().optional()
+    .describe('For type="page": page body HTML. For type="discussion" or "announcement": body HTML (use message for these).'),
+  // assignment
+  name: z.string().optional()
+    .describe('For type="assignment": assignment title (required).'),
+  points_possible: z.number().positive().optional()
+    .describe('For type="assignment" or "quiz": points possible.'),
+  due_at: z.string().optional()
+    .describe('For type="assignment" or "quiz": due date as ISO 8601 string.'),
+  submission_types: z.array(z.string()).optional()
+    .describe('For type="assignment": submission types.'),
+  assignment_group_id: z.number().optional()
+    .describe('For type="assignment" or "quiz": assignment group ID.'),
+  description: z.string().optional()
+    .describe('For type="assignment": raw HTML description. If omitted with notebook_url, rendered from template.'),
+  notebook_url: z.string().optional()
+    .describe('For type="assignment": Google Colab notebook URL for description template rendering.'),
+  notebook_title: z.string().optional()
+    .describe('For type="assignment": link text for notebook URL in rendered description.'),
+  instructions: z.string().optional()
+    .describe('For type="assignment": instructional text for rendered description.'),
+  // quiz
+  quiz_type: z.enum(['practice_quiz', 'assignment', 'graded_survey', 'survey']).optional()
+    .describe('For type="quiz": quiz type.'),
+  time_limit: z.number().int().positive().optional()
+    .describe('For type="quiz": time limit in minutes.'),
+  allowed_attempts: z.number().int().optional()
+    .describe('For type="quiz": number of allowed attempts.'),
+  use_exit_card_template: z.boolean().optional()
+    .describe('For type="quiz": populate title and questions from config exitCardTemplate.'),
+  week: z.number().int().positive().optional()
+    .describe('For type="quiz" with use_exit_card_template: week number for title template.'),
+  questions: z.array(z.object({
+    question_name: z.string(),
+    question_text: z.string(),
+    question_type: z.string(),
+    points_possible: z.number().optional(),
+  })).optional()
+    .describe('For type="quiz": custom questions. Ignored when use_exit_card_template=true.'),
+  // discussion + announcement
+  message: z.string().optional()
+    .describe('For type="discussion" or "announcement": body HTML.'),
+  // module
+  position: z.number().int().positive().optional()
+    .describe('For type="module": position in module list. For type="module_item": position in module.'),
+  // module_item
+  module_name: z.string().optional()
+    .describe('For type="module_item": module name to add item to (case-insensitive partial match, required).'),
+  item_type: z.enum(['SubHeader', 'Page', 'Assignment', 'Quiz', 'ExternalUrl']).optional()
+    .describe('For type="module_item": type of module item (required).'),
+  content_id: z.number().optional()
+    .describe('For type="module_item": Canvas content ID (for Assignment, Quiz types).'),
+  page_url: z.string().optional()
+    .describe('For type="module_item": page URL slug (for Page type).'),
+  external_url: z.string().optional()
+    .describe('For type="module_item": external URL (for ExternalUrl type).'),
+  indent: z.number().int().nonnegative().optional()
+    .describe('For type="module_item": indent level (0–5).'),
+  new_tab: z.boolean().optional()
+    .describe('For type="module_item": open in new tab (for ExternalUrl).'),
+  completion_requirement: completionRequirementSchema,
+  // shared
+  published: z.boolean().optional()
+    .describe('Publish immediately. Default false.'),
+  dry_run: z.boolean().default(false)
+    .describe('Preview without calling Canvas.'),
+  course_id: z.number().optional()
+    .describe('Canvas course ID. Defaults to active course.'),
+})
 
-const listItemsSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('modules'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignments'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('quizzes'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('pages'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('discussions'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('announcements'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('rubrics'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('assignment_groups'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-  z.object({
-    type: z.literal('module_items'),
-    module_name: z.string().describe('Module name (case-insensitive partial match)'),
-    course_id: z.number().int().positive().optional()
-      .describe('Canvas course ID. Defaults to active course.'),
-  }),
-])
+const listItemsSchema = z.object({
+  type: z.enum(['modules', 'assignments', 'quizzes', 'pages', 'discussions', 'announcements', 'rubrics', 'assignment_groups', 'module_items'])
+    .describe('Content type to list'),
+  module_name: z.string().optional()
+    .describe('For type="module_items": module name (case-insensitive partial match, required).'),
+  course_id: z.number().optional()
+    .describe('Canvas course ID. Defaults to active course.'),
+})
 
 export function registerFindTools(
   server: McpServer,
@@ -432,8 +271,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'page') {
-        const pages = await searchPages(client, courseId, args.search)
-        const found = resolveByName(pages, args.search, p => p.title)
+        const pages = await searchPages(client, courseId, args.search!)
+        const found = resolveByName(pages, args.search!, p => p.title)
         if (!found) return toolError(`No page found matching "${args.search}"`)
         const page = await getPage(client, courseId, found.match.url)
         return toJson({
@@ -450,8 +289,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'assignment') {
-        const assignments = await searchAssignments(client, courseId, args.search)
-        const found = resolveByName(assignments, args.search, a => a.name)
+        const assignments = await searchAssignments(client, courseId, args.search!)
+        const found = resolveByName(assignments, args.search!, a => a.name)
         if (!found) return toolError(`No assignment found matching "${args.search}"`)
         const a = found.match
         return toJson({
@@ -470,7 +309,7 @@ export function registerFindTools(
 
       if (args.type === 'quiz') {
         const quizzes = await listQuizzes(client, courseId)
-        const found = resolveByName(quizzes, args.search, q => q.title)
+        const found = resolveByName(quizzes, args.search!, q => q.title)
         if (!found) return toolError(`No quiz found matching "${args.search}"`)
         const q = found.match
         const questions = await listQuizQuestions(client, courseId, q.id)
@@ -490,7 +329,7 @@ export function registerFindTools(
 
       if (args.type === 'module') {
         const modules = await listModules(client, courseId)
-        const found = resolveByName(modules, args.search, m => m.name)
+        const found = resolveByName(modules, args.search!, m => m.name)
         if (!found) return toolError(`No module found matching "${args.search}"`)
         const m = found.match
         return toJson({
@@ -507,10 +346,10 @@ export function registerFindTools(
 
       if (args.type === 'module_item') {
         const modules = await listModules(client, courseId)
-        const foundModule = resolveByName(modules, args.module_name, m => m.name)
+        const foundModule = resolveByName(modules, args.module_name!, m => m.name)
         if (!foundModule) return toolError(`No module found matching "${args.module_name}"`)
         const items = await listModuleItems(client, courseId, foundModule.match.id)
-        const found = resolveByName(items, args.search, i => i.title)
+        const found = resolveByName(items, args.search!, i => i.title)
         if (!found) return toolError(`No module item found matching "${args.search}" in module "${foundModule.match.name}"`)
         const item = found.match
         return toJson({
@@ -530,7 +369,7 @@ export function registerFindTools(
       if (args.type === 'discussion') {
         const topics = await listDiscussionTopics(client, courseId)
         const discussions = topics.filter(t => !t.is_announcement)
-        const found = resolveByName(discussions, args.search, d => d.title)
+        const found = resolveByName(discussions, args.search!, d => d.title)
         if (!found) return toolError(`No discussion found matching "${args.search}"`)
         const d = found.match
         return toJson({
@@ -546,7 +385,7 @@ export function registerFindTools(
 
       if (args.type === 'announcement') {
         const announcements = await listAnnouncements(client, courseId)
-        const found = resolveByName(announcements, args.search, a => a.title)
+        const found = resolveByName(announcements, args.search!, a => a.title)
         if (!found) return toolError(`No announcement found matching "${args.search}"`)
         const a = found.match
         return toJson({
@@ -590,8 +429,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'page') {
-        const pages = await searchPages(client, courseId, args.search)
-        const found = resolveByName(pages, args.search, p => p.title)
+        const pages = await searchPages(client, courseId, args.search!)
+        const found = resolveByName(pages, args.search!, p => p.title)
         if (!found) return toolError(`No page found matching "${args.search}"`)
         const params: { title?: string; body?: string; published?: boolean } = {}
         if (args.title !== undefined) params.title = args.title
@@ -610,8 +449,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'assignment') {
-        const assignments = await searchAssignments(client, courseId, args.search)
-        const found = resolveByName(assignments, args.search, a => a.name)
+        const assignments = await searchAssignments(client, courseId, args.search!)
+        const found = resolveByName(assignments, args.search!, a => a.name)
         if (!found) return toolError(`No assignment found matching "${args.search}"`)
         const params: {
           name?: string; points_possible?: number; due_at?: string | null;
@@ -631,7 +470,7 @@ export function registerFindTools(
 
       if (args.type === 'quiz') {
         const quizzes = await listQuizzes(client, courseId)
-        const found = resolveByName(quizzes, args.search, q => q.title)
+        const found = resolveByName(quizzes, args.search!, q => q.title)
         if (!found) return toolError(`No quiz found matching "${args.search}"`)
         const params: {
           title?: string; quiz_type?: 'practice_quiz' | 'assignment' | 'graded_survey' | 'survey';
@@ -651,7 +490,7 @@ export function registerFindTools(
 
       if (args.type === 'module') {
         const modules = await listModules(client, courseId)
-        const found = resolveByName(modules, args.search, m => m.name)
+        const found = resolveByName(modules, args.search!, m => m.name)
         if (!found) return toolError(`No module found matching "${args.search}"`)
         const params: {
           name?: string; published?: boolean; unlock_at?: string | null;
@@ -668,10 +507,10 @@ export function registerFindTools(
 
       if (args.type === 'module_item') {
         const modules = await listModules(client, courseId)
-        const foundModule = resolveByName(modules, args.module_name, m => m.name)
+        const foundModule = resolveByName(modules, args.module_name!, m => m.name)
         if (!foundModule) return toolError(`No module found matching "${args.module_name}"`)
         const items = await listModuleItems(client, courseId, foundModule.match.id)
-        const found = resolveByName(items, args.search, i => i.title)
+        const found = resolveByName(items, args.search!, i => i.title)
         if (!found) return toolError(`No module item found matching "${args.search}" in module "${foundModule.match.name}"`)
         const params: {
           title?: string; position?: number; indent?: number;
@@ -686,7 +525,7 @@ export function registerFindTools(
       }
 
       if (args.type === 'syllabus') {
-        await updateCourse(client, courseId, { syllabus_body: args.body })
+        await updateCourse(client, courseId, { syllabus_body: args.body! })
         return toJson({ type: 'syllabus', updated: true })
       }
 
@@ -718,8 +557,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'page') {
-        const pages = await searchPages(client, courseId, args.search)
-        const found = resolveByName(pages, args.search, p => p.title)
+        const pages = await searchPages(client, courseId, args.search!)
+        const found = resolveByName(pages, args.search!, p => p.title)
         if (!found) return toolError(`No page found matching "${args.search}"`)
         if (found.match.front_page) {
           return toolError(
@@ -732,8 +571,8 @@ export function registerFindTools(
       }
 
       if (args.type === 'assignment') {
-        const assignments = await searchAssignments(client, courseId, args.search)
-        const found = resolveByName(assignments, args.search, a => a.name)
+        const assignments = await searchAssignments(client, courseId, args.search!)
+        const found = resolveByName(assignments, args.search!, a => a.name)
         if (!found) return toolError(`No assignment found matching "${args.search}"`)
         await deleteAssignment(client, courseId, found.match.id)
         return toJson({ deleted: true, matched_title: found.match.name })
@@ -741,7 +580,7 @@ export function registerFindTools(
 
       if (args.type === 'quiz') {
         const quizzes = await listQuizzes(client, courseId)
-        const found = resolveByName(quizzes, args.search, q => q.title)
+        const found = resolveByName(quizzes, args.search!, q => q.title)
         if (!found) return toolError(`No quiz found matching "${args.search}"`)
         await deleteQuiz(client, courseId, found.match.id)
         return toJson({ deleted: true, matched_title: found.match.title })
@@ -749,7 +588,7 @@ export function registerFindTools(
 
       if (args.type === 'module') {
         const modules = await listModules(client, courseId)
-        const found = resolveByName(modules, args.search, m => m.name)
+        const found = resolveByName(modules, args.search!, m => m.name)
         if (!found) return toolError(`No module found matching "${args.search}"`)
         await deleteModule(client, courseId, found.match.id)
         return toJson({ deleted: true, matched_title: found.match.name })
@@ -757,10 +596,10 @@ export function registerFindTools(
 
       if (args.type === 'module_item') {
         const modules = await listModules(client, courseId)
-        const foundModule = resolveByName(modules, args.module_name, m => m.name)
+        const foundModule = resolveByName(modules, args.module_name!, m => m.name)
         if (!foundModule) return toolError(`No module found matching "${args.module_name}"`)
         const items = await listModuleItems(client, courseId, foundModule.match.id)
-        const found = resolveByName(items, args.search, i => i.title)
+        const found = resolveByName(items, args.search!, i => i.title)
         if (!found) return toolError(`No module item found matching "${args.search}" in module "${foundModule.match.name}"`)
         await deleteModuleItem(client, courseId, foundModule.match.id, found.match.id)
         return toJson({ removed: true, matched_title: found.match.title })
@@ -769,7 +608,7 @@ export function registerFindTools(
       if (args.type === 'discussion') {
         const topics = await listDiscussionTopics(client, courseId)
         const discussions = topics.filter(t => !t.is_announcement)
-        const found = resolveByName(discussions, args.search, d => d.title)
+        const found = resolveByName(discussions, args.search!, d => d.title)
         if (!found) return toolError(`No discussion found matching "${args.search}"`)
         await deleteDiscussionTopic(client, courseId, found.match.id)
         return toJson({ deleted: true, matched_title: found.match.title })
@@ -777,7 +616,7 @@ export function registerFindTools(
 
       if (args.type === 'announcement') {
         const announcements = await listAnnouncements(client, courseId)
-        const found = resolveByName(announcements, args.search, a => a.title)
+        const found = resolveByName(announcements, args.search!, a => a.title)
         if (!found) return toolError(`No announcement found matching "${args.search}"`)
         await deleteDiscussionTopic(client, courseId, found.match.id)
         return toJson({ deleted: true, matched_title: found.match.title })
@@ -812,10 +651,10 @@ export function registerFindTools(
 
       if (args.type === 'page') {
         if (args.dry_run) {
-          return toJson({ dry_run: true, type: 'page', preview: { title: args.title, body: args.body, published: args.published ?? false } })
+          return toJson({ dry_run: true, type: 'page', preview: { title: args.title!, body: args.body, published: args.published ?? false } })
         }
         const page = await createPage(client, courseId, {
-          title: args.title,
+          title: args.title!,
           body: args.body,
           published: args.published ?? false,
         })
@@ -835,7 +674,7 @@ export function registerFindTools(
           return toJson({
             dry_run: true, type: 'assignment',
             preview: {
-              name: args.name,
+              name: args.name!,
               points_possible: args.points_possible ?? config.defaults.pointsPossible,
               due_at: args.due_at,
               submission_types: args.submission_types ?? [config.defaults.submissionType],
@@ -846,7 +685,7 @@ export function registerFindTools(
           })
         }
         const assignment = await createAssignment(client, courseId, {
-          name: args.name,
+          name: args.name!,
           points_possible: args.points_possible ?? config.defaults.pointsPossible,
           due_at: args.due_at,
           submission_types: args.submission_types ?? [config.defaults.submissionType],
@@ -928,10 +767,10 @@ export function registerFindTools(
 
       if (args.type === 'discussion') {
         if (args.dry_run) {
-          return toJson({ dry_run: true, type: 'discussion', preview: { title: args.title, message: args.message, published: args.published ?? false } })
+          return toJson({ dry_run: true, type: 'discussion', preview: { title: args.title!, message: args.message, published: args.published ?? false } })
         }
         const topic = await createDiscussionTopic(client, courseId, {
-          title: args.title,
+          title: args.title!,
           message: args.message,
           is_announcement: false,
           published: args.published ?? false,
@@ -941,10 +780,10 @@ export function registerFindTools(
 
       if (args.type === 'announcement') {
         if (args.dry_run) {
-          return toJson({ dry_run: true, type: 'announcement', preview: { title: args.title, message: args.message } })
+          return toJson({ dry_run: true, type: 'announcement', preview: { title: args.title!, message: args.message } })
         }
         const ann = await createDiscussionTopic(client, courseId, {
-          title: args.title,
+          title: args.title!,
           message: args.message,
           is_announcement: true,
           published: true,
@@ -954,9 +793,9 @@ export function registerFindTools(
 
       if (args.type === 'module') {
         if (args.dry_run) {
-          return toJson({ dry_run: true, type: 'module', preview: { name: args.name, position: args.position, published: args.published ?? false } })
+          return toJson({ dry_run: true, type: 'module', preview: { name: args.name!, position: args.position, published: args.published ?? false } })
         }
-        const mod = await createModule(client, courseId, { name: args.name })
+        const mod = await createModule(client, courseId, { name: args.name! })
         if (args.published) {
           await updateModule(client, courseId, mod.id, { published: true })
         }
@@ -965,7 +804,7 @@ export function registerFindTools(
 
       if (args.type === 'module_item') {
         const modules = await listModules(client, courseId)
-        const foundModule = resolveByName(modules, args.module_name, m => m.name)
+        const foundModule = resolveByName(modules, args.module_name!, m => m.name)
         if (!foundModule) return toolError(`No module found matching "${args.module_name}"`)
 
         if (args.dry_run) {
@@ -974,8 +813,8 @@ export function registerFindTools(
             preview: {
               module_id: foundModule.match.id,
               module_name: foundModule.match.name,
-              item_type: args.item_type,
-              title: args.title,
+              item_type: args.item_type!,
+              title: args.title!,
               content_id: args.content_id,
               page_url: args.page_url,
               external_url: args.external_url,
@@ -988,8 +827,8 @@ export function registerFindTools(
         }
 
         const mi = await createModuleItem(client, courseId, foundModule.match.id, {
-          type: args.item_type,
-          title: args.title,
+          type: args.item_type!,
+          title: args.title!,
           content_id: args.content_id,
           page_url: args.page_url,
           external_url: args.external_url,
@@ -1120,7 +959,7 @@ export function registerFindTools(
 
       if (args.type === 'module_items') {
         const modules = await listModules(client, courseId)
-        const foundModule = resolveByName(modules, args.module_name, m => m.name)
+        const foundModule = resolveByName(modules, args.module_name!, m => m.name)
         if (!foundModule) return toolError(`No module found matching "${args.module_name}"`)
         const items = await listModuleItems(client, courseId, foundModule.match.id)
         const result: Record<string, unknown> = {
@@ -1169,7 +1008,7 @@ export function registerFindTools(
           .describe('Include full HTML body in results. Default false.'),
         save_threshold: z.boolean().optional()
           .describe('If true, persists the threshold value to config as the new default.'),
-        course_id: z.number().int().positive().optional()
+        course_id: z.number().optional()
           .describe('Canvas course ID. Defaults to active course.'),
       }),
     },

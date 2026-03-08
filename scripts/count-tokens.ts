@@ -238,7 +238,7 @@ async function main() {
   console.log(`  ${pad('Tool', 32)} ${rpad('Tokens', 8)}`)
   console.log('  ' + '-'.repeat(46))
   for (const { name, tokens } of perTool) {
-    const bar = '█'.repeat(Math.max(0, Math.round(tokens / 20)))
+    const bar = '█'.repeat(Math.max(0, Math.round(tokens / 50)))
     console.log(`  ${pad(name, 32)} ${rpad(String(tokens), 8)}  ${bar}`)
   }
   console.log('  ' + '-'.repeat(46))

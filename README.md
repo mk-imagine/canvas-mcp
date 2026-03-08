@@ -297,7 +297,7 @@ Student names and Canvas IDs in reporting tool responses are automatically repla
 
 | Tool | Description |
 |------|-------------|
-| `create_item` | Create a course item. `type` is a discriminated union: `page`, `assignment`, `quiz`, `discussion`, `announcement`, `module`, or `module_item`. Pass `dry_run: true` to preview the resolved inputs without calling Canvas. |
+| `create_item` | Create a course item. `type`: `page`, `assignment`, `quiz`, `discussion`, `announcement`, `module`, or `module_item`. Pass `dry_run: true` to preview the resolved inputs without calling Canvas. |
 | `list_items` | List course items by type: `modules`, `assignments`, `quizzes`, `pages`, `discussions`, `announcements`, `rubrics`, `assignment_groups`, or `module_items` (requires `module_name`). |
 
 ### Find, update & delete
@@ -412,6 +412,14 @@ CANVAS_TEST_COURSE_ID=12345
 ```
 
 Use a free [canvas.instructure.com](https://canvas.instructure.com) account with a course named `TEST SANDBOX` — keep it completely separate from your production courses.
+
+### Token overhead analysis
+
+```bash
+npm run count-tokens                       # exact (requires ANTHROPIC_API_KEY)
+npm run count-tokens -- --no-api           # estimate without API key
+npm run count-tokens -- --dump             # also writes raw payloads to tmp/token-dump/
+```
 
 ### Build
 
