@@ -2,6 +2,7 @@ dist/
 .env
 .env.test
 *.js.map
+*.tsbuildinfo
 tmp/
 
 # Obsolete PLanning Docs
