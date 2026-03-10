@@ -406,12 +406,25 @@ Unit tests mock all HTTP with [msw](https://mswjs.io/). Integration tests run ag
 Create `.env.test` in the project root:
 
 ```
+# Core Canvas configuration
 CANVAS_INSTANCE_URL=https://canvas.instructure.com
 CANVAS_API_TOKEN=your_test_teacher_token
 CANVAS_TEST_COURSE_ID=12345
+
+# Student tokens for the seed script (requires 5 students)
+STUDENT0_API_TOKEN=token_0
+STUDENT1_API_TOKEN=token_1
+STUDENT2_API_TOKEN=token_2
+STUDENT3_API_TOKEN=token_3
+STUDENT4_API_TOKEN=token_4
 ```
 
 Use a free [canvas.instructure.com](https://canvas.instructure.com) account with a course named `TEST SANDBOX` — keep it completely separate from your production courses.
+
+1. Create the `.env.test` file with the core and student tokens.
+2. Run the seed script to establish the test state: `npm run seed`
+3. The script automatically populates the remaining IDs (Module, Assignments, etc.) into your `.env.test` file.
+4. Run the integration tests: `npm run test:integration`
 
 ### Token overhead analysis
 

@@ -8,7 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { server as mswServer } from '../../setup/msw-server.js'
-import { CanvasClient, ConfigManager, SecureStore } from '@canvas-mcp/core'
+import { CanvasClient, ConfigManager, SecureStore, SidecarManager } from '@canvas-mcp/core'
 import { registerFindTools } from '../../../src/tools/find.js'
 import { registerReportingTools } from '../../../src/tools/reporting.js'
 
@@ -187,10 +187,12 @@ async function makeFindClient(configPath: string) {
 
 async function makeReportingClient(configPath: string) {
   const configManager = new ConfigManager(configPath)
+  const config = configManager.read()
+  const sidecarManager = new SidecarManager(config.privacy.sidecarPath, config.privacy.blindingEnabled)
   const canvasClient = new CanvasClient({ instanceUrl: CANVAS_URL, apiToken: 'tok' })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
   const secureStore = new SecureStore()
-  registerReportingTools(mcpServer, canvasClient, configManager, secureStore)
+  registerReportingTools(mcpServer, canvasClient, configManager, secureStore, sidecarManager)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'test-client', version: '0.0.1' })

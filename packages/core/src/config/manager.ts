@@ -42,7 +42,6 @@ export class ConfigManager {
   constructor(configPath?: string) {
     this.configPath =
       configPath ??
-      process.env.CANVAS_MCP_CONFIG ??
       join(homedir(), '.config', 'mcp', 'canvas-mcp', 'config.json')
   }
 
@@ -77,12 +76,12 @@ export class ConfigManager {
 
     if (!config.canvas.instanceUrl) {
       throw new ConfigError(
-        `canvas.instanceUrl is not configured. Set it in ${this.configPath} or via CANVAS_INSTANCE_URL environment variable.`
+        `canvas.instanceUrl is not configured. Set it in ${this.configPath}.`
       )
     }
     if (!config.canvas.apiToken) {
       throw new ConfigError(
-        `canvas.apiToken is not configured. Set it in ${this.configPath} or via CANVAS_API_TOKEN environment variable.`
+        `canvas.apiToken is not configured. Set it in ${this.configPath}.`
       )
     }
 

@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { CanvasClient, ConfigManager, SecureStore } from '@canvas-mcp/core'
+import { CanvasClient, ConfigManager, SecureStore, SidecarManager } from '@canvas-mcp/core'
 import { registerReportingTools } from '../../packages/teacher/src/tools/reporting.js'
 import { registerFindTools } from '../../packages/teacher/src/tools/find.js'
 
@@ -30,9 +30,11 @@ function makeTmpConfigPath(): string {
 async function makeIntegrationClient(configPath: string, store?: SecureStore) {
   const secureStore = store ?? new SecureStore()
   const configManager = new ConfigManager(configPath)
+  const config = configManager.read()
+  const sidecarManager = new SidecarManager(config.privacy.sidecarPath, config.privacy.blindingEnabled)
   const canvasClient = new CanvasClient({ instanceUrl, apiToken })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerReportingTools(mcpServer, canvasClient, configManager, secureStore)
+  registerReportingTools(mcpServer, canvasClient, configManager, secureStore, sidecarManager)
   registerFindTools(mcpServer, canvasClient, configManager)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
