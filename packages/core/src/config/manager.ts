@@ -63,14 +63,6 @@ export class ConfigManager {
 
     const config = deepMerge(DEFAULT_CONFIG, raw)
 
-    // Environment variable overrides (useful for Docker/CI)
-    if (process.env.CANVAS_INSTANCE_URL) {
-      config.canvas.instanceUrl = process.env.CANVAS_INSTANCE_URL
-    }
-    if (process.env.CANVAS_API_TOKEN) {
-      config.canvas.apiToken = process.env.CANVAS_API_TOKEN
-    }
-
     // Expand ~ in sidecarPath
     config.privacy.sidecarPath = expandHome(config.privacy.sidecarPath)
 
