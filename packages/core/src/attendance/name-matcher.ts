@@ -3,10 +3,13 @@ import type { ZoomParticipant, RosterEntry, MatchResult } from './types.js'
 import type { ZoomNameMap } from './zoom-name-map.js'
 
 /** Fuzzy auto-match threshold — distances below this are high-confidence matches. */
-const AUTO_MATCH_THRESHOLD = 0.33
+const AUTO_MATCH_THRESHOLD = 0.45
 
 /** Ambiguous ceiling — distances below this (but >= auto-match) produce candidates. */
 const AMBIGUOUS_CEILING = 0.5
+
+/** Maximum distance for unmatched candidates shown in the review file. */
+const UNMATCHED_CANDIDATE_CEILING = 0.8
 
 /** Minimum token length for part-to-part comparison (avoids misleading short-token scores). */
 const MIN_PART_LENGTH = 3
@@ -104,7 +107,7 @@ export function matchAttendance(
 
       if (bestDist < AMBIGUOUS_CEILING) {
         candidates.push(candidate)
-      } else {
+      } else if (bestDist < UNMATCHED_CANDIDATE_CEILING) {
         distantCandidates.push(candidate)
       }
     }

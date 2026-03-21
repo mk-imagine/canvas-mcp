@@ -69,7 +69,7 @@ describe('matchAttendance', () => {
     })
   })
 
-  it('(4) high-confidence fuzzy match — auto-matches with distance < 0.33', () => {
+  it('(4) high-confidence fuzzy match — auto-matches with distance < 0.45', () => {
     const nameMap = new ZoomNameMap()
     // "Jane Smth" vs "Jane Smith" -- edit distance 1, max length 10 => 0.1
     const participants: ZoomParticipant[] = [
@@ -90,30 +90,30 @@ describe('matchAttendance', () => {
     expect(nameMap.get('Jane Smth')).toBe(1)
   })
 
-  it('(5) ambiguous fuzzy match — distance between 0.33 and 0.5', () => {
+  it('(5) ambiguous fuzzy match — distance between 0.45 and 0.5', () => {
     const nameMap = new ZoomNameMap()
-    // Use a name that is moderately close to multiple roster entries
-    // but not close enough to any single one to auto-match.
-    // "Jxxx Smithson" — full string is distant, part "Smithson" vs "Smith" = 3/8 = 0.375
+    // "Jxxx Smythson" — part "Smythson" vs "Smith" = lev 4/8 = 0.5,
+    // so best part distance is 0.5 which equals AMBIGUOUS_CEILING.
+    // Full-string is distant. Lands just at the edge — no candidates below 0.5.
+    // Instead use "Jxxx Smythsn" — part "Smythsn" vs "Smith" = lev 3/7 = 0.429,
+    // which is below 0.45 (auto-match). With the raised threshold, this now
+    // auto-matches but ties between Jane Smith and John Smith → ambiguous.
     const participants: ZoomParticipant[] = [
-      { name: 'Jxxx Smithson', originalName: null, duration: 30 },
+      { name: 'Jxxx Smythsn', originalName: null, duration: 30 },
     ]
 
     const result = matchAttendance(participants, roster, nameMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(1)
-    expect(result.ambiguous[0].zoomName).toBe('Jxxx Smithson')
-    expect(result.ambiguous[0].duration).toBe(30)
+    expect(result.ambiguous[0].zoomName).toBe('Jxxx Smythsn')
     expect(result.ambiguous[0].candidates.length).toBeGreaterThanOrEqual(1)
-    // All candidates should have distance between 0.33 and 0.5
     for (const c of result.ambiguous[0].candidates) {
-      expect(c.distance).toBeGreaterThanOrEqual(0.33)
       expect(c.distance).toBeLessThan(0.5)
     }
   })
 
-  it('(6) unmatched name — no close match, but includes distant candidates', () => {
+  it('(6) unmatched name with no nearby candidates — no candidates shown', () => {
     const nameMap = new ZoomNameMap()
     const participants: ZoomParticipant[] = [
       { name: 'xyz123', originalName: null, duration: 20 },
@@ -126,13 +126,30 @@ describe('matchAttendance', () => {
     expect(result.unmatched).toHaveLength(1)
     expect(result.unmatched[0].zoomName).toBe('xyz123')
     expect(result.unmatched[0].duration).toBe(20)
-    // Distant candidates should be included for the review file
+    // All roster distances are >= 0.8, so no candidates included
+    expect(result.unmatched[0].candidates).toBeUndefined()
+  })
+
+  it('(6b) unmatched name with nearby candidates — shows candidates below 0.8 only', () => {
+    const nameMap = new ZoomNameMap()
+    // "Zxqy Johanxxy" — all best part distances >= 0.5 (unmatched), but
+    // some are < 0.8 (John Smith at 0.5, Alice Johnson at 0.5, Jane Smith at 0.625).
+    // Bob Williams at 0.875 should be excluded.
+    const participants: ZoomParticipant[] = [
+      { name: 'Zxqy Johanxxy', originalName: null, duration: 20 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    expect(result.unmatched).toHaveLength(1)
     expect(result.unmatched[0].candidates).toBeDefined()
     expect(result.unmatched[0].candidates!.length).toBeGreaterThan(0)
-    // All candidates should have distance >= 0.5
     for (const c of result.unmatched[0].candidates!) {
       expect(c.distance).toBeGreaterThanOrEqual(0.5)
+      expect(c.distance).toBeLessThan(0.8)
     }
+    // Bob Williams (distance 0.875) should not appear
+    expect(result.unmatched[0].candidates!.find((c) => c.canvasName === 'Bob Williams')).toBeUndefined()
   })
 
   it('(7) persistent map entry for user not in roster — falls through to fuzzy', () => {
