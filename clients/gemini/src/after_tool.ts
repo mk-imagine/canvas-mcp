@@ -34,6 +34,21 @@ export function buildSummary(toolName: string, data: Record<string, unknown>): s
   return null
 }
 
+import { appendFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+
+const DEBUG = process.env['CANVAS_MCP_DEBUG'] === '1'
+const DEBUG_LOG = join(homedir(), '.cache', 'canvas-mcp', 'hook-debug.log')
+
+function debugLog(label: string, data: unknown) {
+  if (!DEBUG) return
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${label}: ${JSON.stringify(data, null, 2)}\n`
+  process.stderr.write(`[canvas-mcp/after_tool] ${label}\n`)
+  try { appendFileSync(DEBUG_LOG, line) } catch { /* ignore */ }
+}
+
 async function main() {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
@@ -50,14 +65,20 @@ async function main() {
   }
 
   const toolName = hookInput.tool_name
+  debugLog('TOOL_CALL', { tool_name: toolName, input_keys: Object.keys(hookInput) })
+
   if (!toolName) {
     process.stdout.write('{}')
     return
   }
 
+  debugLog('TOOL_INPUT', hookInput.tool_input)
+  debugLog('TOOL_RESPONSE', hookInput.tool_response)
+
   const llmContent = (hookInput.tool_response as Record<string, unknown>)?.llmContent as Record<string, unknown>[] | undefined
   const textPayload = llmContent?.[0]?.text
   if (!textPayload) {
+    debugLog('NO_TEXT_PAYLOAD', { llmContent })
     process.stdout.write('{}')
     return
   }
@@ -65,6 +86,8 @@ async function main() {
   try {
     const data = JSON.parse(textPayload as string)
     const summary = buildSummary(toolName as string, data)
+
+    debugLog('SUMMARY', { summary })
 
     if (summary) {
       process.stdout.write(JSON.stringify({

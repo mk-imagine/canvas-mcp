@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -45,6 +45,17 @@ export function blindValue(value: unknown, mapping: Record<string, string>): unk
   return value
 }
 
+const DEBUG = process.env['CANVAS_MCP_DEBUG'] === '1'
+const DEBUG_LOG = join(homedir(), '.cache', 'canvas-mcp', 'hook-debug.log')
+
+function debugLog(label: string, data: unknown) {
+  if (!DEBUG) return
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${label}: ${JSON.stringify(data, null, 2)}\n`
+  process.stderr.write(`[canvas-mcp/before_model] ${label}\n`)
+  try { appendFileSync(DEBUG_LOG, line) } catch { /* ignore */ }
+}
+
 async function main() {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
@@ -54,6 +65,7 @@ async function main() {
 
   const mapping = loadMapping()
   if (mapping === null) {
+    debugLog('NO_MAPPING', 'sidecar not found')
     process.stdout.write('{}')
     return
   }
@@ -66,11 +78,16 @@ async function main() {
     return
   }
 
+  debugLog('INPUT_KEYS', Object.keys(hookInput))
+
   const llmRequest = hookInput['llm_request']
   if (llmRequest === undefined) {
+    debugLog('NO_LLM_REQUEST', 'llm_request missing from input')
     process.stdout.write('{}')
     return
   }
+
+  debugLog('LLM_REQUEST', llmRequest)
 
   const blindedRequest = blindValue(llmRequest, mapping)
 
@@ -78,17 +95,22 @@ async function main() {
   const blindedJson = JSON.stringify(blindedRequest)
   const changed = originalJson !== blindedJson
 
+  debugLog('CHANGED', { changed })
+
   if (!changed) {
+    debugLog('OUTPUT', '{}')
     process.stdout.write('{}')
     return
   }
 
-  process.stdout.write(JSON.stringify({
+  const output = JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'BeforeModel',
       llm_request: blindedRequest,
     },
-  }))
+  })
+  debugLog('OUTPUT', JSON.parse(output))
+  process.stdout.write(output)
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('before_model.ts')) {

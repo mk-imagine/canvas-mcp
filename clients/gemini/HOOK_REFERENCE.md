@@ -176,3 +176,41 @@ The CLI streams responses in small chunks. This frequently results in "Split Tok
 ### C. Multi-Field Buffering
 When a split token occurs, the partial fragment (e.g., `[STUD`) appears at the end of **both** the `text` field and the `candidates` field in Chunk N.
 * **Next Turn:** In Chunk N+1, the buffer must be prepended to **both** fields to ensure both form valid tokens (`[STUDENT_001]`) and can be unblinded correctly.
+
+### D. BeforeModel Hook Destroys Non-Text Parts (Gemini CLI Bug)
+
+> **Status:** Local patch required. Upstream fix: [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340)
+
+The Gemini CLI hook API uses a "stable, SDK-agnostic" request format for `BeforeModel` hooks. The `llm_request.messages` array contains **text-only** content — `functionCall`, `functionResponse`, `inlineData`, `thought`, and all other non-text parts are intentionally filtered out by `toHookLLMRequest` (documented design for a simplified hook interface).
+
+**The bug:** When a hook returns a modified `llm_request`, `fromHookLLMRequest` creates brand-new `Content` objects from the text-only messages, **completely replacing** the original SDK contents. All non-text parts are destroyed.
+
+**Impact on canvas-mcp:** The `before_model` hook blinds student names in the conversation. When it returns a modified `llm_request` (because a name was found and replaced), all `functionCall`/`functionResponse` parts are stripped. The model never sees prior tool results and re-invokes the same tool — infinite loop.
+
+**Why class-level queries work:** Queries like "give me a report of all under-engaged students" don't contain student names, so `before_model` returns `{}` (no-op). The original SDK request with all parts is preserved unchanged.
+
+**Why student-specific queries loop:** Queries like "can you get student1's grades?" contain a student name. `before_model` blinds it and returns a modified `llm_request`. On the second model call, the stored conversation history still has the original name (modifications don't persist to history), so `before_model` blinds again, destroying the tool history again — loop.
+
+**The fix:** Patch `fromHookLLMRequest` to merge hook text changes back into the original `baseRequest.contents` instead of replacing them. See [patches/gemini-cli-hookTranslator.patch.md](patches/gemini-cli-hookTranslator.patch.md).
+
+#### Evidence from debug logs
+
+With `CANVAS_MCP_DEBUG=1` enabled, the debug log at `~/.cache/canvas-mcp/hook-debug.log` shows:
+
+1. `after_tool` correctly receives the full tool response with blinded data
+2. `before_model` receives the conversation with the original student name (text-only — no tool calls visible in messages)
+3. `before_model` returns modified `llm_request` (`CHANGED: true`)
+4. On the next model call, the conversation again has the original name but tool history is gone — the model calls the tool again
+
+#### Debug logging
+
+All three hooks support debug logging via the `CANVAS_MCP_DEBUG=1` environment variable. Add it as a prefix to hook commands in `~/.gemini/settings.json`:
+
+```json
+"command": "CANVAS_MCP_DEBUG=1 node /path/to/canvas-mcp/clients/gemini/dist/before_model.js"
+```
+
+Logs are written to `~/.cache/canvas-mcp/hook-debug.log` and include timestamped entries for:
+- `before_model`: `INPUT_KEYS`, `LLM_REQUEST`, `CHANGED`, `OUTPUT`
+- `after_model`: `INPUT_KEYS`, `LLM_RESPONSE`, `CHANGED`, `UNBLINDED_RESPONSE`, `OUTPUT`
+- `after_tool`: `TOOL_CALL`, `TOOL_INPUT`, `TOOL_RESPONSE`, `SUMMARY`

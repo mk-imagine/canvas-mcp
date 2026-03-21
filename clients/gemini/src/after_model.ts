@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -8,8 +8,8 @@ const BUFFER_PATH = join(CACHE_DIR, 'pii_buffer.txt')
 
 const sidecarPath = process.env['CANVAS_MCP_SIDECAR_PATH'] ?? DEFAULT_SIDECAR_PATH
 
-export const TOKEN_PATTERN = /\[STUDENT_\d{3}\]/g
-const PARTIAL_PATTERN = /\[(?:S(?:T(?:U(?:D(?:E(?:N(?:T(?:_(?:\d{0,3})?)?)?)?)?)?)?)?)?$/
+export const TOKEN_PATTERN = /\[?STUDENT_\d{3}\]?/g
+const PARTIAL_PATTERN = /\[?(?:S(?:T(?:U(?:D(?:E(?:N(?:T(?:_(?:\d{0,3})?)?)?)?)?)?)?)?)?$/
 
 interface SidecarFile {
   mapping: Record<string, string>
@@ -57,7 +57,8 @@ export function processString(text: string, mapping: Record<string, string>, ctx
   }
 
   const unblinded = workingText.replaceAll(TOKEN_PATTERN, (token) => {
-    return mapping[token] ?? token
+    const normalized = /^\[.*\]$/.test(token) ? token : `[${token}]`
+    return mapping[normalized] ?? token
   })
 
   const partialMatch = unblinded.match(PARTIAL_PATTERN)
@@ -82,6 +83,17 @@ export function processValue(value: unknown, mapping: Record<string, string>, ct
   return value
 }
 
+const DEBUG = process.env['CANVAS_MCP_DEBUG'] === '1'
+const DEBUG_LOG = join(CACHE_DIR, 'hook-debug.log')
+
+function debugLog(label: string, data: unknown) {
+  if (!DEBUG) return
+  const ts = new Date().toISOString()
+  const line = `[${ts}] ${label}: ${JSON.stringify(data, null, 2)}\n`
+  process.stderr.write(`[canvas-mcp/after_model] ${label}\n`)
+  try { appendFileSync(DEBUG_LOG, line) } catch { /* ignore */ }
+}
+
 async function main() {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
@@ -97,14 +109,20 @@ async function main() {
     return
   }
 
+  debugLog('INPUT_KEYS', Object.keys(hookInput))
+
   const llmResponse = hookInput['llm_response']
   if (llmResponse === undefined) {
+    debugLog('NO_LLM_RESPONSE', 'llm_response missing from input')
     process.stdout.write('{}')
     return
   }
 
+  debugLog('LLM_RESPONSE', llmResponse)
+
   const mapping = loadMapping()
   if (mapping === null) {
+    debugLog('NO_MAPPING', 'sidecar not found')
     process.stdout.write('{}')
     return
   }
@@ -117,12 +135,27 @@ async function main() {
   const unblindedResponse = processValue(llmResponse, mapping, ctx)
   writeBufferFile(ctx.nextBuffer)
 
-  process.stdout.write(JSON.stringify({
+  const originalJson = JSON.stringify(llmResponse)
+  const unblindedJson = JSON.stringify(unblindedResponse)
+  const changed = originalJson !== unblindedJson
+
+  debugLog('CHANGED', { changed, bufferIn: ctx.inputBuffer, bufferOut: ctx.nextBuffer })
+
+  if (!changed) {
+    debugLog('OUTPUT', '{}')
+    process.stdout.write('{}')
+    return
+  }
+
+  debugLog('UNBLINDED_RESPONSE', unblindedResponse)
+  const output = JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'AfterModel',
       llm_response: unblindedResponse,
     },
-  }))
+  })
+  debugLog('OUTPUT', JSON.parse(output))
+  process.stdout.write(output)
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('after_model.ts')) {

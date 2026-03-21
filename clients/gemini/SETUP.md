@@ -18,6 +18,8 @@ Three hooks are involved:
 - **Gemini CLI v0.26.0 or later** (hooks were introduced in this release)
 - **canvas-mcp** installed and configured with a valid `canvas.instanceUrl` and `canvas.apiToken`
 
+> **Required patch:** Gemini CLI v0.34.0 (and likely earlier versions) has a bug that destroys tool call history when a `BeforeModel` hook modifies text. You **must** apply a local patch before the hooks will work correctly for student-specific queries. See [Step 2b](#step-2b--patch-gemini-cli) below.
+
 ---
 
 ## Step 1 — Enable blinding in canvas-mcp
@@ -57,6 +59,18 @@ clients/gemini/dist/before_model.js
 clients/gemini/dist/after_model.js
 clients/gemini/dist/after_tool.js
 ```
+
+---
+
+## Step 2b — Patch Gemini CLI
+
+Gemini CLI's `hookTranslator.js` has a bug: when a `BeforeModel` hook returns a modified `llm_request`, the CLI rebuilds the conversation as text-only content, **destroying all `functionCall` and `functionResponse` parts**. This causes an infinite tool-call loop for any query where the `before_model` hook needs to blind a student name.
+
+An upstream fix has been submitted ([google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340)). Until it is merged, you must apply a local patch.
+
+See **[patches/gemini-cli-hookTranslator.patch.md](patches/gemini-cli-hookTranslator.patch.md)** for the full patched code and instructions. The patch modifies `fromHookLLMRequest` to merge hook text changes back into the original contents instead of replacing them, preserving non-text parts (tool calls, tool results, etc.).
+
+> **Re-apply after updates:** The patch must be re-applied every time you update Gemini CLI (e.g., `npm install -g @google/gemini-cli`). Check the upstream PR status — once merged, a Gemini CLI update will include the fix and the patch will no longer be needed.
 
 ---
 
@@ -175,7 +189,9 @@ The sidecar is written on the first blinded tool call of a session, and again wh
 
 ## Known limitations
 
-**First-message blindspot:** `before_model` can only replace names that are already in the sidecar. The sidecar doesn't exist until the first canvas-mcp tool call completes. If you type a student's name in your very first message — before running any tool — that name will reach the model unblinded. To avoid this, run a reporting tool (e.g., ask "show me the class grades") before asking questions that reference specific students by name. The `[canvas-mcp] Fetched grades for N students.` notification confirms the sidecar is ready.
+**Gemini CLI hook bug (patched locally, upstream PR pending):** Gemini CLI's `fromHookLLMRequest` destroys non-text parts (`functionCall`, `functionResponse`) when a `BeforeModel` hook returns a modified `llm_request`. This causes an infinite tool-call loop for student-specific queries where `before_model` needs to blind a name. A local patch is **required** — see [Step 2b](#step-2b--patch-gemini-cli). Upstream fix: [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340).
+
+**First-message blindspot (mitigated):** The server pre-fetches the roster at startup and populates the sidecar before the first tool call. In most cases, `before_model` will have the name↔token mapping ready by the time you type your first message. However, if the Canvas API is slow or the server just started, there is a brief race window where a student name typed immediately could reach the model unblinded.
 
 **Single server instance:** Two simultaneous canvas-mcp processes will overwrite each other's sidecar. The atomic write prevents file corruption, but only the most recently started process's session will be in the file.
 

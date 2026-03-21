@@ -36,6 +36,18 @@ describe('after_model hook', () => {
       expect(output).toBe('Hello [STUDENT_999]!')
     })
 
+    it('should unblind tokens without square brackets', () => {
+      const input = 'Hello STUDENT_001!'
+      const output = processString(input, mockMapping, ctx)
+      expect(output).toBe('Hello Alice Smith!')
+    })
+
+    it('should unblind a mix of bracketed and unbracketed tokens', () => {
+      const input = 'STUDENT_001 and [STUDENT_002] are here.'
+      const output = processString(input, mockMapping, ctx)
+      expect(output).toBe('Alice Smith and Bob Jones are here.')
+    })
+
     it('should buffer partial tokens at the end of string', () => {
       const input = 'This is [STUD'
       const output = processString(input, mockMapping, ctx)
