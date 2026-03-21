@@ -37,10 +37,11 @@ function toJson(value: unknown) {
 /**
  * Builds a single-block blinded response.
  *
- * Only the blinded JSON (tokens, no real names) is sent as a content block.
- * A second "unblinded" block is intentionally omitted: MCP clients that do not
- * filter by audience annotation (e.g. Gemini CLI) would display — and pass to
- * the model — any user-audience block, defeating the blinding entirely.
+ * Returns plain text JSON with tokens only (no real names, no audience
+ * annotations). The MCP `audience` annotation is intentionally omitted:
+ * clients like Gemini CLI do not implement audience filtering and either
+ * ignore or drop annotated content blocks, causing the model to loop
+ * because it never sees the tool result.
  *
  * Clients that want real names should configure an after_model hook to replace
  * tokens in the model's text response, or call student_pii(action='resolve').
@@ -61,7 +62,6 @@ function blindedResponse(blindedData: unknown, store: SecureStore, sidecarManage
       {
         type: 'text' as const,
         text: blindedJson,
-        annotations: { audience: ['assistant' as const] },
       },
     ],
   }
@@ -723,7 +723,6 @@ export function registerReportingTools(
                 name: resolved.name,
                 canvas_id: resolved.canvasId,
               }, null, 2),
-              annotations: { audience: ['user' as const] },
             },
           ],
         }
@@ -736,7 +735,6 @@ export function registerReportingTools(
             {
               type: 'text' as const,
               text: JSON.stringify(tokens, null, 2),
-              annotations: { audience: ['assistant' as const] },
             },
           ],
         }

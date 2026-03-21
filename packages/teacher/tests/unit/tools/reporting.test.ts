@@ -120,7 +120,7 @@ function getContent(result: ToolResult): ContentBlock[] {
   return result.content as ContentBlock[]
 }
 
-/** Parses content[0].text as JSON (assistant-audience blinded data — tokens only). */
+/** Parses content[0].text as JSON (blinded data — tokens only, no real names). */
 function parseBlindedResult(result: ToolResult) {
   return JSON.parse(getContent(result)[0].text)
 }
@@ -240,9 +240,9 @@ describe('get_grades — scope=class', () => {
       arguments: { scope: 'class' },
     })
     const blocks = getContent(result)
-    // Single blinded block with assistant audience
+    // Single blinded block, no audience annotation
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.student_count).toBe(2)
@@ -450,9 +450,9 @@ describe('get_grades — scope=assignment', () => {
       arguments: { scope: 'assignment', assignment_id: 501 },
     })
     const blocks = getContent(result)
-    // Single blinded block with assistant audience
+    // Single blinded block, no audience annotation
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.assignment.id).toBe(501)
@@ -492,9 +492,9 @@ describe('get_grades — scope=student', () => {
       arguments: { scope: 'student', student_token: janeToken },
     })
     const blocks = getContent(result)
-    // Single blinded block with assistant audience
+    // Single blinded block, no audience annotation
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     // Block: no real names
     const data = parseBlindedResult(result)
     expect(data.student_token).toBe(janeToken)
@@ -581,9 +581,9 @@ describe('get_submission_status — type=missing', () => {
       arguments: { type: 'missing' },
     })
     const blocks = getContent(result)
-    // Single blinded block with assistant audience
+    // Single blinded block, no audience annotation
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_missing_submissions).toBe(1)
@@ -671,9 +671,9 @@ describe('get_submission_status — type=late', () => {
       arguments: { type: 'late' },
     })
     const blocks = getContent(result)
-    // Single blinded block with assistant audience
+    // Single blinded block, no audience annotation
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     // Block: tokens only, no real names
     const data = parseBlindedResult(result)
     expect(data.total_late_submissions).toBe(1)
@@ -711,7 +711,7 @@ describe('get_submission_status — type=late', () => {
 // ─── student_pii ──────────────────────────────────────────────────────────────
 
 describe('student_pii — action=resolve', () => {
-  it('returns name and canvas_id for a valid token (user-audience only)', async () => {
+  it('returns name and canvas_id for a valid token', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const store = new SecureStore()
@@ -724,11 +724,29 @@ describe('student_pii — action=resolve', () => {
     })
     const blocks = getContent(result)
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('user')
+    expect(blocks[0].annotations).toBeUndefined()
     const data = JSON.parse(blocks[0].text)
     expect(data.name).toBe('Jane Smith')
     expect(data.canvas_id).toBe(1001)
     expect(data.student_token).toBe(token)
+  })
+
+  it('resolves token without square brackets', async () => {
+    const configPath = makeTmpConfigPath()
+    writeConfig(configPath)
+    const store = new SecureStore()
+    store.tokenize(1001, 'Jane Smith')
+
+    const { mcpClient } = await makeTestClient(configPath, store)
+    const result = await mcpClient.callTool({
+      name: 'student_pii',
+      arguments: { action: 'resolve', student_token: 'STUDENT_001' },
+    })
+    const blocks = getContent(result)
+    expect(blocks).toHaveLength(1)
+    const data = JSON.parse(blocks[0].text)
+    expect(data.name).toBe('Jane Smith')
+    expect(data.canvas_id).toBe(1001)
   })
 
   it('returns error for unknown token', async () => {
@@ -745,7 +763,7 @@ describe('student_pii — action=resolve', () => {
 })
 
 describe('student_pii — action=list', () => {
-  it('returns token list (assistant-audience only)', async () => {
+  it('returns token list', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const store = new SecureStore()
@@ -759,7 +777,7 @@ describe('student_pii — action=list', () => {
     })
     const blocks = getContent(result)
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toContain('assistant')
+    expect(blocks[0].annotations).toBeUndefined()
     const data = JSON.parse(blocks[0].text) as Array<{ token: string }>
     const tokens = data.map(d => d.token)
     expect(tokens).toContain(t1)
@@ -868,14 +886,14 @@ describe('get_module_summary — module_name', () => {
 // ─── FERPA blinding — MCP protocol compliance ─────────────────────────────────
 //
 // These tests verify the single-block blinding contract:
-//   - Only ONE content block is returned (blinded JSON, audience=['assistant'])
-//   - No user-audience block (prevents MCP clients from displaying/forwarding real names)
+//   - Only ONE content block is returned (blinded JSON, no audience annotations)
 //   - The block contains only [STUDENT_NNN] tokens, no real PII
 //
-// Removing the user-audience block is intentional: MCP clients that do not filter
-// by audience annotation (e.g. Gemini CLI) would display AND pass real names to
-// the model, defeating the blinding entirely. Clients wanting real names should
-// use an after_model hook or call student_pii(action='resolve').
+// Audience annotations are intentionally omitted: MCP clients like Gemini CLI
+// do not implement audience filtering and either ignore or drop annotated
+// content blocks, causing the model to loop because it never sees the tool
+// result. Clients wanting real names should use an after_model hook or call
+// student_pii(action='resolve').
 
 describe('FERPA blinding — MCP protocol compliance', () => {
   beforeEach(() => {
@@ -889,7 +907,7 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     )
   })
 
-  it('exactly one content block with audience=[assistant], tokens only, no real names', async () => {
+  it('exactly one content block, no annotations, tokens only, no real names', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
@@ -897,24 +915,21 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const blocks = getContent(result)
 
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toEqual(['assistant'])
+    expect(blocks[0].annotations).toBeUndefined()
     expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).not.toContain('Bob Adams')
     expect(() => JSON.parse(blocks[0].text)).not.toThrow()
   })
 
-  it('no content block targets both assistant and user simultaneously', async () => {
+  it('no content block has audience annotations (dropped for MCP client compatibility)', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
     const { mcpClient } = await makeTestClient(configPath)
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class' } })
 
     for (const block of getContent(result)) {
-      const audience = block.annotations?.audience ?? []
-      const hasAssistant = audience.includes('assistant')
-      const hasUser = audience.includes('user')
-      expect(hasAssistant && hasUser).toBe(false)
+      expect(block.annotations).toBeUndefined()
     }
   })
 
@@ -935,7 +950,7 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const blocks = getContent(result)
 
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toEqual(['assistant'])
+    expect(blocks[0].annotations).toBeUndefined()
     expect(blocks[0].text).not.toContain('Bob Adams')
     expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
     expect(() => JSON.parse(blocks[0].text)).not.toThrow()
@@ -957,7 +972,7 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const blocks = getContent(result)
 
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toEqual(['assistant'])
+    expect(blocks[0].annotations).toBeUndefined()
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).toMatch(/\[STUDENT_\d{3}\]/)
     expect(() => JSON.parse(blocks[0].text)).not.toThrow()
@@ -985,7 +1000,7 @@ describe('FERPA blinding — MCP protocol compliance', () => {
     const blocks = getContent(result)
 
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].annotations?.audience).toEqual(['assistant'])
+    expect(blocks[0].annotations).toBeUndefined()
     expect(blocks[0].text).not.toContain('Jane Smith')
     expect(blocks[0].text).toMatch(janeToken)
     expect(() => JSON.parse(blocks[0].text)).not.toThrow()

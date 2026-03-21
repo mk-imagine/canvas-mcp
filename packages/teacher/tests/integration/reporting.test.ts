@@ -179,8 +179,8 @@ describe('Integration: get_grades — scope=class', () => {
     const result = await mcpClient.callTool({ name: 'get_grades', arguments: { scope: 'class' } })
     const content = getContent(result)
     const data = parseResult(result)
-    expect(content[0].annotations?.audience).toEqual(['assistant'])
-    expect(content[1].annotations?.audience).toEqual(['user'])
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations).toBeUndefined()
     expect(data.students.length).toBeGreaterThan(0)
     for (const s of data.students) {
       expect(s.student).toMatch(/^\[STUDENT_\d{3}\]$/)
@@ -346,8 +346,8 @@ describe('Integration: get_grades — scope=assignment', () => {
       arguments: { scope: 'assignment', assignment_id: assignment1Id },
     })
     const content = getContent(result)
-    expect(content[0].annotations?.audience).toEqual(['assistant'])
-    expect(content[1].annotations?.audience).toEqual(['user'])
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations).toBeUndefined()
     const data = parseResult(result)
     expect(data.assignment.id).toBe(assignment1Id)
     expect(data.assignment.points_possible).toBe(10)
@@ -475,8 +475,8 @@ describe('Integration: get_grades — scope=student', () => {
       arguments: { scope: 'student', student_token: token },
     })
     const content = getContent(result)
-    expect(content[0].annotations?.audience).toEqual(['assistant'])
-    expect(content[1].annotations?.audience).toEqual(['user'])
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations).toBeUndefined()
     const assistantText = content[0].text
     const resolved = store.resolve(token)!
     expect(assistantText).not.toContain(resolved.name)
@@ -575,8 +575,8 @@ describe('Integration: get_submission_status — type=missing', () => {
     const { mcpClient } = await makeIntegrationClient(configPath, store)
     const result = await mcpClient.callTool({ name: 'get_submission_status', arguments: { type: 'missing' } })
     const content = getContent(result)
-    expect(content[0].annotations?.audience).toEqual(['assistant'])
-    expect(content[1].annotations?.audience).toEqual(['user'])
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations).toBeUndefined()
     const assistantText = content[0].text
     const userText = content[1].text
     const names = userText.split('\n').slice(1)
@@ -647,8 +647,8 @@ describe('Integration: get_submission_status — type=late', () => {
     const { mcpClient } = await makeIntegrationClient(configPath, store)
     const result = await mcpClient.callTool({ name: 'get_submission_status', arguments: { type: 'late' } })
     const content = getContent(result)
-    expect(content[0].annotations?.audience).toEqual(['assistant'])
-    expect(content[1].annotations?.audience).toEqual(['user'])
+    expect(content).toHaveLength(1)
+    expect(content[0].annotations).toBeUndefined()
     const assistantText = content[0].text
     const userText = content[1].text
     const names = userText.split('\n').slice(1)
