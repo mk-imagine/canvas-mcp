@@ -4,6 +4,7 @@ dist/
 *.js.map
 *.tsbuildinfo
 tmp/
+coverage/
 
 # Obsolete PLanning Docs
 PLANNING.md
