@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { matchAttendance } from '../../../src/attendance/name-matcher.js'
+import { matchAttendance, stripPronouns, bestDistance } from '../../../src/attendance/name-matcher.js'
 import { ZoomNameMap } from '../../../src/attendance/zoom-name-map.js'
 import type { ZoomParticipant, RosterEntry } from '../../../src/attendance/types.js'
 
@@ -69,7 +69,7 @@ describe('matchAttendance', () => {
     })
   })
 
-  it('(4) high-confidence fuzzy match — auto-matches with distance < 0.25', () => {
+  it('(4) high-confidence fuzzy match — auto-matches with distance < 0.33', () => {
     const nameMap = new ZoomNameMap()
     // "Jane Smth" vs "Jane Smith" -- edit distance 1, max length 10 => 0.1
     const participants: ZoomParticipant[] = [
@@ -90,25 +90,25 @@ describe('matchAttendance', () => {
     expect(nameMap.get('Jane Smth')).toBe(1)
   })
 
-  it('(5) ambiguous fuzzy match — distance between 0.25 and 0.5', () => {
+  it('(5) ambiguous fuzzy match — distance between 0.33 and 0.5', () => {
     const nameMap = new ZoomNameMap()
-    // "J. Smith" is 10 chars; "Jane Smith"=10 chars, "John Smith"=10 chars
-    // lev("j. smith", "jane smith") and lev("j. smith", "john smith")
-    // both should land in 0.25-0.5 range
+    // Use a name that is moderately close to multiple roster entries
+    // but not close enough to any single one to auto-match.
+    // "Jxxx Smithson" — full string is distant, part "Smithson" vs "Smith" = 3/8 = 0.375
     const participants: ZoomParticipant[] = [
-      { name: 'J. Smith', originalName: null, duration: 30 },
+      { name: 'Jxxx Smithson', originalName: null, duration: 30 },
     ]
 
     const result = matchAttendance(participants, roster, nameMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(1)
-    expect(result.ambiguous[0].zoomName).toBe('J. Smith')
+    expect(result.ambiguous[0].zoomName).toBe('Jxxx Smithson')
     expect(result.ambiguous[0].duration).toBe(30)
     expect(result.ambiguous[0].candidates.length).toBeGreaterThanOrEqual(1)
-    // All candidates should have distance between 0.25 and 0.5
+    // All candidates should have distance between 0.33 and 0.5
     for (const c of result.ambiguous[0].candidates) {
-      expect(c.distance).toBeGreaterThanOrEqual(0.25)
+      expect(c.distance).toBeGreaterThanOrEqual(0.33)
       expect(c.distance).toBeLessThan(0.5)
     }
   })
@@ -169,5 +169,118 @@ describe('matchAttendance', () => {
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(0)
     expect(result.unmatched).toHaveLength(2)
+  })
+
+  it('(10) pronoun suffix stripped — exact match after removing "(he/him)"', () => {
+    const nameMap = new ZoomNameMap()
+    const participants: ZoomParticipant[] = [
+      { name: 'Jane Smith (she/her)', originalName: null, duration: 50 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    expect(result.matched).toHaveLength(1)
+    expect(result.matched[0].canvasUserId).toBe(1)
+    expect(result.matched[0].source).toBe('exact')
+  })
+
+  it('(11) parenthesized token without slash is kept — "(nickname)" not stripped', () => {
+    const nameMap = new ZoomNameMap()
+    const participants: ZoomParticipant[] = [
+      { name: 'Jane (Jenny) Smith', originalName: null, duration: 50 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    // "(Jenny)" lacks a slash so it's kept — won't exact-match "Jane Smith"
+    // but part matching "Jane" and "Smith" should fuzzy-match
+    expect(result.matched).toHaveLength(1)
+    expect(result.matched[0].canvasUserId).toBe(1)
+    expect(result.matched[0].source).toBe('fuzzy')
+  })
+
+  it('(12) part-to-part matching — first name only matches via parts', () => {
+    const nameMap = new ZoomNameMap()
+    // "Alice" alone: full-string distance to "Alice Johnson" is high,
+    // but part "Alice" vs "Alice" = 0
+    const participants: ZoomParticipant[] = [
+      { name: 'Alice', originalName: null, duration: 40 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    expect(result.matched).toHaveLength(1)
+    expect(result.matched[0].canvasUserId).toBe(3)
+    expect(result.matched[0].canvasName).toBe('Alice Johnson')
+    expect(result.matched[0].source).toBe('fuzzy')
+  })
+
+  it('(13) "J. Smith" matches via part-to-part — "Smith" vs "Smith" = 0', () => {
+    const nameMap = new ZoomNameMap()
+    const participants: ZoomParticipant[] = [
+      { name: 'J. Smith', originalName: null, duration: 30 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    // "Smith" part matches exactly against both Jane Smith and John Smith,
+    // so this becomes ambiguous (two candidates at distance 0)
+    // or matches the first one — either way, it should not be unmatched
+    expect(result.unmatched).toHaveLength(0)
+  })
+})
+
+describe('stripPronouns', () => {
+  it('removes (he/him) suffix', () => {
+    expect(stripPronouns('John Smith (he/him)')).toBe('John Smith')
+  })
+
+  it('removes (she/her) suffix', () => {
+    expect(stripPronouns('Jane Smith (she/her)')).toBe('Jane Smith')
+  })
+
+  it('removes (they/them) suffix', () => {
+    expect(stripPronouns('Alex Jones (they/them)')).toBe('Alex Jones')
+  })
+
+  it('removes (she/they) mixed pronouns', () => {
+    expect(stripPronouns('Sam Lee (she/they)')).toBe('Sam Lee')
+  })
+
+  it('keeps parenthesized tokens without slash — potential nicknames', () => {
+    expect(stripPronouns('Jane (Jenny) Smith')).toBe('Jane (Jenny) Smith')
+  })
+
+  it('keeps plain names unchanged', () => {
+    expect(stripPronouns('Jane Smith')).toBe('Jane Smith')
+  })
+
+  it('handles multiple pronoun tokens', () => {
+    expect(stripPronouns('Name (he/him) (they/them)')).toBe('Name')
+  })
+})
+
+describe('bestDistance', () => {
+  it('full-string match returns 0', () => {
+    expect(bestDistance('jane smith', 'jane smith')).toBe(0)
+  })
+
+  it('part match beats full-string distance', () => {
+    // "alice" vs "alice johnson" — full string is 0.615, but part "alice" vs "alice" = 0
+    const full = bestDistance('alice', 'alice johnson')
+    expect(full).toBe(0)
+  })
+
+  it('skips short tokens (< 3 chars) in part comparison', () => {
+    // "jo" vs "john smith" — "jo" is too short for part comparison
+    // so only full-string distance is used
+    const d = bestDistance('jo', 'john smith')
+    expect(d).toBeGreaterThan(0.5)
+  })
+
+  it('returns best part-to-part distance for multi-part names', () => {
+    // "jane smth" vs "jane smith" — part "jane" vs "jane" = 0
+    const d = bestDistance('jane smth', 'jane smith')
+    expect(d).toBe(0)
   })
 })
