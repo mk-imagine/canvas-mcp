@@ -21,6 +21,41 @@ export interface ZoomCsvOptions {
 }
 
 /**
+ * A Canvas roster entry used for name matching.
+ */
+export interface RosterEntry {
+  userId: number
+  name: string
+  sortableName: string
+}
+
+/**
+ * Result of the attendance name matching pipeline.
+ */
+export interface MatchResult {
+  matched: Array<{
+    zoomName: string
+    canvasUserId: number
+    canvasName: string
+    duration: number
+    source: 'map' | 'exact' | 'fuzzy'
+  }>
+  ambiguous: Array<{
+    zoomName: string
+    duration: number
+    candidates: Array<{
+      canvasName: string
+      canvasUserId: number
+      distance: number
+    }>
+  }>
+  unmatched: Array<{
+    zoomName: string
+    duration: number
+  }>
+}
+
+/**
  * An entry written to the review file for human inspection.
  * Covers Zoom names that could not be definitively matched to a Canvas student.
  */
