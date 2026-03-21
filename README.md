@@ -47,6 +47,7 @@ Connect this server to an AI assistant (like Claude Desktop) and ask it to:
 - Reset a sandbox course with a confirmation gate
 - Find any item by name across pages, assignments, quizzes, modules, discussions, and announcements
 - Search course content semantically using Canvas Smart Search (beta)
+- Import attendance from Zoom participant CSVs with fuzzy name matching
 
 ## Requirements
 
@@ -130,11 +131,22 @@ Then open a text editor and create the file `~/.config/mcp/canvas-mcp/config.jso
     "assignmentGroup": "Assignments",
     "submissionType": "online_url",
     "pointsPossible": 100
+  },
+  "attendance": {
+    "hostName": "Your Name",
+    "defaultPoints": 10,
+    "defaultMinDuration": 0
   }
 }
 ```
 
 Replace `yourschool.instructure.com` with your school's Canvas domain and `YOUR_CANVAS_API_TOKEN_HERE` with the token from step 5. Update `courseCodes` to your actual course codes (or leave the array empty to see all your courses).
+
+**`attendance.hostName`** — your Zoom display name (without `(Host)` suffix). Rows matching this name are filtered out of Zoom CSVs before matching. Case-insensitive.
+
+**`attendance.defaultPoints`** — default points to award for attendance (default: 10).
+
+**`attendance.defaultMinDuration`** — minimum minutes to count as present (default: 0, meaning no filter).
 
 **`canvas.instanceUrl`** and **`canvas.apiToken`** are required — the server exits immediately with a clear error if either is missing.
 
@@ -272,7 +284,7 @@ To limit it to a single project, place the same TOML in `.codex/config.toml` ins
 
 ## Tools
 
-18 tools total. All tools accept an optional `course_id` to override the active course.
+19 tools total. All tools accept an optional `course_id` to override the active course.
 
 ### Course context
 
@@ -335,6 +347,12 @@ Student names and Canvas IDs in reporting tool responses are automatically repla
 **Alternative confirmation:** The user may instead provide `confirmation_text` exactly matching the Canvas course name (case-sensitive), skipping the token flow entirely.
 
 **Always preserved:** Enrollments, course settings, and navigation tabs are never touched.
+
+### Attendance
+
+| Tool | Description |
+|------|-------------|
+| `import_attendance` | Import attendance from a Zoom participant CSV. Two-step workflow: `action="parse"` reads CSV, matches Zoom names to Canvas roster via a 4-step pipeline (persistent map → exact → fuzzy with part-to-part Levenshtein → unmatched), and returns tokenized results for review. `action="submit"` posts grades for matched students. Supports `min_duration` filtering, `dry_run` preview, and a persistent `zoom-name-map.json` for remembered name mappings. Results are FERPA-blinded. |
 
 ### Smart search (Canvas beta feature)
 
@@ -477,6 +495,14 @@ packages/
 │   │   ├── security/
 │   │   │   ├── secure-store.ts   # AES-256-GCM in-memory PII store (session tokens, mlock)
 │   │   │   └── sidecar-manager.ts# Writes/deletes the PII sidecar file for Gemini CLI hooks
+│   │   ├── attendance/
+│   │   │   ├── zoom-csv-parser.ts# Parse Zoom participant CSV (column filtering, pronoun/host stripping)
+│   │   │   ├── name-matcher.ts   # 4-step name matching pipeline (map → exact → fuzzy → unmatched)
+│   │   │   ├── zoom-name-map.ts  # Persistent JSON map from Zoom names to Canvas user IDs
+│   │   │   ├── review-file.ts    # Writes ambiguous/unmatched entries for human review
+│   │   │   └── types.ts          # ZoomParticipant, RosterEntry, MatchResult, ReviewEntry
+│   │   ├── matching/
+│   │   │   └── levenshtein.ts    # Levenshtein edit distance (shared by attendance + Gemini hooks)
 │   │   ├── templates/
 │   │   │   ├── index.ts          # Re-exports from service.ts
 │   │   │   ├── service.ts        # TemplateService — manifest parsing, Handlebars rendering
@@ -485,14 +511,23 @@ packages/
 │   │   └── tools/
 │   │       └── context.ts        # list_courses, set_active_course, get_active_course
 │   └── tests/
+│       ├── fixtures/
+│       │   └── zoom-report-sample.csv  # Real Zoom export for parser tests
 │       ├── setup/
 │       │   └── msw-server.ts     # Shared MSW server setup for core unit tests
-│       └── unit/tools/
-│           └── context.test.ts   # Tests for context tools (moved from teacher)
+│       └── unit/
+│           ├── attendance/       # name-matcher, zoom-csv-parser, zoom-name-map, review-file tests
+│           ├── canvas/           # submissions tests
+│           ├── config/           # schema, manager tests
+│           ├── matching/         # levenshtein tests
+│           ├── templates/        # service tests
+│           └── tools/
+│               └── context.test.ts
 └── teacher/                      # @canvas-mcp/teacher — MCP server entry point
     ├── src/
     │   ├── index.ts              # MCP server wiring and startup
     │   └── tools/
+    │       ├── attendance.ts     # import_attendance (parse + submit, per-server WeakMap state)
     │       ├── content.ts        # upload_file, create_rubric, delete_file
     │       ├── modules.ts        # build_module (blueprint / manual / solution / clone)
     │       ├── reporting.ts      # get_module_summary, get_grades, get_submission_status, student_pii
@@ -503,6 +538,7 @@ packages/
         │   ├── msw-server.ts     # Shared MSW server setup for unit tests
         │   └── integration-env.ts# Integration test environment loader
         ├── unit/tools/
+        │   ├── attendance.test.ts
         │   ├── content.test.ts
         │   ├── find.test.ts
         │   ├── modules.test.ts

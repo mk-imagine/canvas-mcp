@@ -1,202 +1,157 @@
 # Testing Strategy: Monorepo Test Organization
 
-This document identifies gaps and structural issues in the `canvas-mcp` monorepo test suite and outlines a plan to address them.
+This document describes the test suite structure for the `canvas-mcp` monorepo and records the issues that were addressed to reach it.
+
+**Status legend:** `[x]` complete
 
 ## 1. Overview
 
-The current test suite has good coverage of `packages/teacher` tool logic but leaves `packages/core` — the shared library that teacher depends on — entirely untested in isolation. There are also three organizational issues that reduce clarity and discoverability.
+The test suite covers both `packages/core` (shared library) and `packages/teacher` (MCP server) with unit and integration tests.
 
 ### Issues Addressed
 
-1. **`packages/core` has no tests** — substantial, independently-testable logic is covered only incidentally through teacher's tests.
-2. **Integration tests live at the repo root** rather than alongside the package they test.
-3. **`context.test.ts` tests a core-package function** but lives in teacher's unit test tree.
-4. **`connectivity.test.ts` is a one-off environment check** with no corresponding source module, making it an outlier in the naming convention.
+1. **`[x]` `packages/core` had no tests** — added `packages/core/tests/unit/` covering config, templates, attendance matching, CSV parsing, Levenshtein, context tools, and submissions (10 test files). `SecureStore` and `SidecarManager` do not yet have dedicated tests.
+2. **`[x]` Integration tests lived at the repo root** — moved `tests/integration/` into `packages/teacher/tests/integration/` and consolidated vitest configs.
+3. **`[x]` `context.test.ts` tested a core-package function** but lived in teacher's unit tree — moved to `packages/core/tests/unit/tools/`.
+4. **`[x]` `connectivity.test.ts` was a one-off environment check** with a misleading name — renamed to `environment.test.ts`.
 
 ---
 
-## 2. Issue 1: `packages/core` Has No Tests
-
-### Problem
-
-`packages/core` contains four independently-testable units with non-trivial logic:
-
-- **`SecureStore`** (`security/secure-store.ts`) — AES-256-GCM encryption, token issuance, counter stability, and zeroing on destroy.
-- **`SidecarManager`** (`security/sidecar-manager.ts`) — atomic file writes, skip-if-unchanged logic, purge, and the `enabled=false` short-circuit.
-- **`ConfigManager`** (`config/manager.ts`) — deep merge with `DEFAULT_CONFIG`, `privacy` migration for legacy configs, `~` expansion, and validation errors for missing credentials.
-- **`renderTemplate` / `validateItems`** (`templates/index.ts`) — pure functions with well-defined inputs and outputs covering four template branches and per-type field validation.
-
-None of these require a live Canvas instance or an MCP server. Testing them through teacher's integration/unit tests obscures failures (a template bug surfaces as a module-creation failure), adds unnecessary coupling, and prevents running core tests independently.
-
-### Plan
-
-Add `packages/core/tests/unit/` with a `vitest.config.ts` that mirrors the teacher config. No MSW server is needed — none of these units make HTTP calls.
-
-#### `secure-store.test.ts`
-
-- **Tokenize — idempotency**: calling `tokenize(id, name)` twice with the same `id` returns the same token.
-- **Tokenize — counter**: first call returns `[STUDENT_001]`, second new id returns `[STUDENT_002]`, etc.
-- **Resolve — roundtrip**: `resolve(tokenize(id, name))` returns `{ canvasId: id, name }`.
-- **Resolve — unknown token**: returns `null` for a token that was never issued.
-- **listTokens — encounter order**: tokens appear in the order `tokenize` was first called, not alphabetically.
-- **destroy — zeroes key**: after `destroy()`, `resolve()` returns `null` for all previously valid tokens.
-- **destroy — clears lists**: `listTokens()` returns `[]` after `destroy()`.
-
-#### `sidecar-manager.test.ts`
-
-Uses `tmpdir()` to avoid touching the real filesystem path.
-
-- **`enabled=false` is a no-op**: `sync()` returns `false` and writes no file.
-- **First write**: `sync()` writes a valid JSON file with `session_id`, `last_updated`, and bidirectional `mapping`.
-- **Skip if unchanged**: a second `sync()` with the same session and token count returns `false` and does not touch the file.
-- **Write on new token**: a second `sync()` after a new `tokenize()` call returns `true` and updates the file.
-- **Atomic write**: the `.pii_session.tmp` file is not present after `sync()` returns.
-- **File permissions**: the written file has mode `0o600`.
-- **Corrupt sidecar**: if the existing sidecar contains invalid JSON, `sync()` overwrites it rather than throwing.
-- **`purge()` deletes the file**: after `sync()`, `purge()` removes the file.
-- **`purge()` is safe when no file exists**: calling `purge()` on a path that does not exist does not throw.
-
-#### `config-manager.test.ts`
-
-Uses `tmpdir()` for all config file I/O.
-
-- **Missing file**: `read()` on a non-existent path throws `ConfigError` (missing credentials).
-- **Deep merge**: a config with only `canvas` set inherits all `defaults` and `privacy` values from `DEFAULT_CONFIG`.
-- **`~` expansion**: `privacy.sidecarPath` values starting with `~/` are expanded to the real home directory.
-- **Missing `instanceUrl`**: throws `ConfigError` with a message referencing `canvas.instanceUrl`.
-- **Missing `apiToken`**: throws `ConfigError` with a message referencing `canvas.apiToken`.
-- **Privacy migration**: a config file that has no `privacy` key gets `privacy.blindingEnabled` set to `true` and the migrated config is written back to disk.
-- **No migration when `privacy` present**: a config with an explicit `privacy` key is not rewritten.
-- **`write()` creates directories**: writing to a path whose parent does not exist creates the parent directories.
-- **`update()` roundtrip**: `update({ program: { activeCourseId: 42 } })` persists only that field and leaves all others unchanged.
-
-#### `templates.test.ts`
-
-- **`validateItems` — unknown template**: returns an error string for an unrecognised template name.
-- **`validateItems` — wrong type for template**: returns an error string when an item's `type` is not in the template's accepted set.
-- **`validateItems` — missing required field**: each item type enforces its required fields (e.g. `coding_assignment` requires `title` and `hours`).
-- **`validateItems` — valid inputs**: returns `null` for a correct item list on each of the four templates.
-- **`renderTemplate` — throws on invalid items**: throws the error string from `validateItems` rather than returning a partial result.
-- **`renderTemplate` — `later-standard` structure**: output starts with an OVERVIEW subheader + overview page, then an ASSIGNMENTS subheader, then item renderables, then a WRAP-UP subheader + exit card quiz.
-- **`renderTemplate` — `later-review` structure**: same shape as `later-standard`.
-- **`renderTemplate` — `earlier-standard` with assignments and videos**: TO-DO subheader precedes assignment renderables; reminder assignments are auto-appended; QUICK ACCESS TO VIDEOS subheader and video pages appear when video items are present; exit card quiz is last.
-- **`renderTemplate` — `earlier-standard` without videos**: QUICK ACCESS TO VIDEOS section is omitted entirely.
-- **`renderTemplate` — `earlier-review` structure**: TO-DO subheader, assignment renderables, two auto-generated reminder assignments, exit card quiz.
-- **`renderTemplate` — numbering**: week number appears in generated titles; assignment indices (`N.1`, `N.2`) increment correctly.
-- **`renderTemplate` — `config.defaults.pointsPossible` fallback**: items without an explicit `points` field use the config default.
-
----
-
-## 3. Issue 2: Integration Tests Live at the Repo Root
-
-### Problem
-
-`tests/integration/` is at the monorepo root, but all integration tests import from `packages/teacher/src/tools/` and exercise teacher-package tools exclusively. The root-level `tests/vitest.config.ts` duplicates the `@canvas-mcp/core` alias already defined in `packages/teacher/vitest.config.ts`. This means the integration tests have no logical home in the workspace — `npm test` inside `packages/teacher` does not run them, and they are invisible to any package-level tooling.
-
-### Plan
-
-Move `tests/` into `packages/teacher/tests/integration/` and consolidate the vitest configs.
-
-```
-packages/teacher/
-  tests/
-    setup/
-      msw-server.ts          (existing)
-      integration-env.ts     (moved from tests/setup/)
-    unit/
-      tools/                 (existing, unchanged)
-    integration/
-      connectivity.test.ts   (moved)
-      content.test.ts        (moved)
-      context.test.ts        (moved)
-      find.test.ts           (moved)
-      modules.test.ts        (moved)
-      reporting.test.ts      (moved)
-      reset.test.ts          (moved)
-  vitest.config.ts           (unit tests, existing)
-  vitest.integration.config.ts  (new, replaces root tests/vitest.config.ts)
-```
-
-The root `tests/` directory and its `vitest.config.ts` are then deleted. The `test:integration` npm script in the root `package.json` is updated to point to the new config path.
-
----
-
-## 4. Issue 3: `context.test.ts` Tests a Core-Package Function
-
-### Problem
-
-`packages/teacher/tests/unit/tools/context.test.ts` tests `registerContextTools`, which is exported from `packages/core/src/tools/context.ts`, not from any file in `packages/teacher/src/tools/`. It spins up a full `McpServer` + `InMemoryTransport` + `Client` stack to call the tool over the MCP protocol.
-
-This placement creates two awkward outcomes:
-
-1. The file name implies it belongs to a teacher tool file, but there is no `packages/teacher/src/tools/context.ts`.
-2. If `registerContextTools` changes, the relevant test is in teacher, not core — the wrong package for the code under test.
-
-### Plan
-
-Once `packages/core/tests/` exists (Issue 1), move `context.test.ts` there as `packages/core/tests/unit/tools/context.test.ts`. The test itself does not need to change — `McpServer` and `InMemoryTransport` are dev dependencies available in core's test environment. Update `packages/core/vitest.config.ts` to include the test.
-
-This means the teacher unit test tree will have exactly one test file per source file in `packages/teacher/src/tools/`: `content.test.ts`, `find.test.ts`, `modules.test.ts`, `reporting.test.ts`, `reset.test.ts`.
-
----
-
-## 5. Issue 4: `connectivity.test.ts` Is a One-Off Environment Check
-
-### Problem
-
-`tests/integration/connectivity.test.ts` directly calls the Canvas REST API using raw `fetch` and hard-coded credential env vars — it does not use `CanvasClient` or any teacher tool. Its describe block is named `'Pre-Phase B: Canvas API connectivity'`, a historical artifact from early development. It stands apart from every other integration test file, which all follow the pattern of importing a `register*Tools` function and exercising it via MCP.
-
-The file serves a legitimate purpose: verifying that the test environment has correct credentials, course access, and API permissions before running destructive tests. But its name does not signal this role.
-
-### Plan
-
-Rename the file to `environment.test.ts` to make its role self-documenting. Update the describe block label to `'Test environment: Canvas API connectivity and permissions'`. No code changes are needed beyond the rename and label — the tests themselves are correct and valuable.
-
-After the move in Issue 2, this file lands at `packages/teacher/tests/integration/environment.test.ts`.
-
----
-
-## 6. Resulting Structure
-
-After all four changes:
+## 2. Current Test Structure
 
 ```
 packages/
   core/
     tests/
+      fixtures/
+        zoom-report-sample.csv
       unit/
-        secure-store.test.ts
-        sidecar-manager.test.ts
-        config-manager.test.ts
-        templates.test.ts
+        attendance/
+          name-matcher.test.ts      # matchAttendance, stripPronouns, bestDistance
+          review-file.test.ts       # attendance review file generation
+          zoom-csv-parser.test.ts   # Zoom CSV parsing, pronoun handling, host filtering
+          zoom-name-map.test.ts     # persistent Zoom→Canvas name mapping
+        canvas/
+          submissions.test.ts       # submission data helpers
+        config/
+          manager.test.ts           # ConfigManager deep merge, validation, migration
+          schema.test.ts            # config schema validation
+        matching/
+          levenshtein.test.ts       # Levenshtein distance function
+        templates/
+          service.test.ts           # TemplateService directory scanning, rendering
         tools/
-          context.test.ts
+          context.test.ts           # registerContextTools (core export, tested via MCP protocol)
     vitest.config.ts
   teacher/
     tests/
       setup/
-        msw-server.ts
-        integration-env.ts
+        msw-server.ts              # MSW mock server (unit tests)
+        integration-env.ts         # integration test environment setup
       unit/
         tools/
-          content.test.ts
-          find.test.ts
-          modules.test.ts
-          reporting.test.ts
-          reset.test.ts
+          attendance.test.ts       # import_attendance tool (parse/submit actions)
+          content.test.ts          # content management tools
+          find.test.ts             # find_item tool
+          modules.test.ts          # build_module tool
+          reporting.test.ts        # get_grades, get_submission_status
+          reset.test.ts            # reset_course tool
       integration/
-        environment.test.ts
-        content.test.ts
-        context.test.ts
-        find.test.ts
-        modules.test.ts
-        reporting.test.ts
-        reset.test.ts
-    vitest.config.ts
-    vitest.integration.config.ts
-clients/
-  gemini/
-    tests/             (see clients/gemini/docs/TESTING.md)
+        attendance.test.ts         # attendance import end-to-end (dedicated seed assignment)
+        content.test.ts            # content CRUD
+        context.test.ts            # context tools
+        environment.test.ts        # Canvas API connectivity and permissions check
+        find.test.ts               # find_item
+        modules.test.ts            # module building
+        reporting.test.ts          # grades and submissions
+        reset.test.ts              # course reset (runs seed in afterAll)
+    vitest.config.ts               # unit tests
+    vitest.integration.config.ts   # integration tests
 ```
 
-Each package owns its tests. `npm run test:unit` and `npm run test:integration` continue to work from the repo root via updated script paths.
+---
+
+## 3. Running Tests
+
+```bash
+# All unit tests (no credentials required)
+npm run test:unit
+
+# All integration tests (requires .env.test)
+npm run test:integration
+
+# Single unit test file
+cd packages/teacher && node --no-warnings ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/unit/tools/find.test.ts
+
+# Single integration test file
+cd packages/teacher && node --no-warnings ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/attendance.test.ts
+```
+
+---
+
+## 4. Unit Tests
+
+### `packages/core` (10 test files)
+
+No HTTP mocking needed — all units are pure functions or use `tmpdir()` for filesystem isolation.
+
+- **`attendance/name-matcher.test.ts`** — Tests the 4-step matching pipeline (persistent map → exact → fuzzy → unmatched), pronoun stripping, part-to-part Levenshtein with full-string tiebreaker, ambiguous tie detection, and candidate generation for unmatched entries.
+- **`attendance/zoom-csv-parser.test.ts`** — Standard CSV parsing, BOM/CRLF handling, original name extraction, host filtering (case-insensitive, rejoin rows), pronoun detection (`he/him`, `she/her/ella`, `they/them`), and a real Zoom fixture test for duplicate column resolution.
+- **`attendance/review-file.test.ts`** — Review file JSON generation from match results.
+- **`attendance/zoom-name-map.test.ts`** — Persistent Zoom→Canvas name map read/write/lookup.
+- **`canvas/submissions.test.ts`** — Submission data helpers.
+- **`config/manager.test.ts`** — Deep merge with `DEFAULT_CONFIG`, `~` expansion, credential validation errors, privacy migration, `write()` and `update()` roundtrips.
+- **`config/schema.test.ts`** — Config schema validation.
+- **`matching/levenshtein.test.ts`** — Levenshtein edit distance: identical strings, insertions, deletions, substitutions, case sensitivity, empty strings, Unicode.
+- **`templates/service.test.ts`** — Template directory scanning, manifest parsing, Handlebars rendering.
+- **`tools/context.test.ts`** — `registerContextTools` tested via `McpServer` + `InMemoryTransport` + `Client` stack.
+
+### `packages/teacher` (6 unit test files)
+
+All HTTP is mocked via MSW (`msw-server.ts` with `onUnhandledRequest: 'error'`). Each file corresponds to a source file in `packages/teacher/src/tools/`.
+
+- **`attendance.test.ts`** — `import_attendance` parse and submit actions, blinded output, `WeakMap`-scoped parse state.
+- **`content.test.ts`** — Content management tools.
+- **`find.test.ts`** — `find_item` tool.
+- **`modules.test.ts`** — `build_module` tool.
+- **`reporting.test.ts`** — `get_grades`, `get_submission_status` with PII blinding.
+- **`reset.test.ts`** — `reset_course` dry-run and confirmation flow.
+
+---
+
+## 5. Integration Tests
+
+Integration tests require a `.env.test` file at the project root with:
+
+```
+CANVAS_INSTANCE_URL=https://your-instance.instructure.com
+CANVAS_API_TOKEN=your-api-token
+CANVAS_TEST_COURSE_ID=12345
+CANVAS_TEST_ATTENDANCE_ASSIGNMENT_ID=67890
+```
+
+Use a free Canvas sandbox (`canvas.instructure.com`). The attendance assignment ID is created by `npm run seed` and written to `.env.test`.
+
+Tests run **sequentially** (`fileParallelism: false`) because they share Canvas state. `reset.test.ts` runs `npm run seed` in `afterAll` to restore the course after destructive operations.
+
+### Attendance integration tests
+
+`attendance.test.ts` uses a dedicated seed assignment (`CANVAS_TEST_ATTENDANCE_ASSIGNMENT_ID`) separate from other tests to avoid grade conflicts. Key behaviors tested:
+
+- Parse action with roster matching and blinded output
+- Submit action with grade posting and dry-run support
+- Grade restoration in `afterAll` (skips PUT for null grades)
+- PII blinding — no real student names in assertion messages
+- Name-map re-parse workflow (parse → save map → re-parse → verify `source: 'map'`)
+- `min_duration` filtering (participants below threshold excluded from matches)
+
+### Vitest config note
+
+`vitest.integration.config.ts` sets `root: fileURLToPath(new URL('.', import.meta.url))` so that `include` paths resolve relative to `packages/teacher/`, not the repo root. Without this, `npm run test:integration` from the repo root fails to discover test files.
+
+---
+
+## 6. Remaining Test Gaps
+
+- **`SecureStore`** — AES-256-GCM encryption, token issuance, counter stability, zeroing on destroy. No HTTP calls; testable with pure unit tests.
+- **`SidecarManager`** — Atomic file writes, skip-if-unchanged, purge, `enabled=false` short-circuit. Testable with `tmpdir()`.

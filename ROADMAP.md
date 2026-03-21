@@ -14,7 +14,7 @@ Four discrete issues, each independently actionable:
 
 | # | Status | Issue |
 |---|--------|-------|
-| 1.1 | `[ ]` | `packages/core` has no unit tests — add `packages/core/tests/unit/` covering `SecureStore`, `SidecarManager`, `ConfigManager`, and `renderTemplate` |
+| 1.1 | `[x]` | `packages/core` has no unit tests — add `packages/core/tests/unit/` covering `ConfigManager`, `renderTemplate`, attendance matching, CSV parsing, Levenshtein, and context tools (10 test files, 81 tests). `SecureStore` and `SidecarManager` do not yet have dedicated tests. |
 | 1.2 | `[x]` | Integration tests live at the repo root — move `tests/integration/` into `packages/teacher/tests/integration/` and consolidate vitest configs |
 | 1.3 | `[x]` | `context.test.ts` tests a core-package function but lives in teacher's unit tree — move to `packages/core/tests/unit/tools/` |
 | 1.4 | `[x]` | `connectivity.test.ts` is a one-off environment check with a misleading name — rename to `environment.test.ts` |
@@ -130,7 +130,24 @@ Package canvas-mcp as a Docker image for distribution to other teachers. Target 
 
 ---
 
-## 5. MCP SDK Discriminated Union Workaround Revert
+## 5. Attendance Import
+
+> Full specification: [docs/briefs/attendance-import-brief.md](docs/briefs/attendance-import-brief.md)
+
+Import attendance from Zoom participant CSVs into Canvas gradebook. Two-step `parse` → `submit` workflow with FERPA-blinded output.
+
+| # | Status | Task |
+|---|--------|------|
+| 5.1 | `[x]` | `import_attendance` tool with `parse` action — CSV parsing, roster matching, blinded response |
+| 5.2 | `[x]` | `import_attendance` tool with `submit` action — grade posting with dry-run support |
+| 5.3 | `[x]` | Integration tests for parse, submit, dry-run, PII blinding |
+| 5.4 | `[x]` | Zoom CSV duplicate column bug fix (parser preferred meeting-level columns over participant-level) |
+| 5.5 | `[x]` | Test hardening — dedicated seed assignment, per-server parse state (`WeakMap`), grade restoration fix, name-map re-parse test, `min_duration` filtering test |
+| 5.6 | `[x]` | Improved name matching — part-to-part Levenshtein comparison, pronoun stripping in CSV parser, full-string tiebreaker for tied fuzzy matches, case-insensitive host filtering |
+
+---
+
+## 6. MCP SDK Discriminated Union Workaround Revert
 
 > Full specification: [docs/MCP_SDK_DISCRIMINATED_UNION_WORKAROUND.md](docs/MCP_SDK_DISCRIMINATED_UNION_WORKAROUND.md)
 
