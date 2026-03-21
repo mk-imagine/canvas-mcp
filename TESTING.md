@@ -196,7 +196,7 @@ packages/
     vitest.integration.config.ts
 clients/
   gemini/
-    tests/             (see clients/gemini/TESTING.md)
+    tests/             (see clients/gemini/docs/TESTING.md)
 ```
 
 Each package owns its tests. `npm run test:unit` and `npm run test:integration` continue to work from the repo root via updated script paths.

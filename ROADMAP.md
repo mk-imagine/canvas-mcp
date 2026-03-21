@@ -76,7 +76,28 @@ Hooks authenticate with a per-session bearer token (a random UUID written to a t
 
 On startup (when `blindingEnabled` is true), silently fetch the course enrollment list to populate `SecureStore` before any tool call. Eliminates the first-message blindspot (§5.2) where a user typing a student name before any Canvas tool runs sends that name to the LLM unblinded.
 
-### 3.3 AfterTool Unblinded System Message
+### 3.3 Fuzzy Name Matching in `before_model` Hook
+
+**Status:** `[x]`
+
+> Full specification: [clients/gemini/docs/FUZZY_MATCHING_REQUIREMENTS.md](clients/gemini/docs/FUZZY_MATCHING_REQUIREMENTS.md)
+
+The `before_model` hook previously used exact `replaceAll` matching, which failed on wrong casing, typos, and partial names — allowing real student names to leak through to the model unblinded. Replaced with a three-phase fuzzy matching pipeline:
+
+| # | Status | Task |
+|---|--------|------|
+| 3.3.1 | `[x]` | Hand-rolled Levenshtein distance function (no external deps) |
+| 3.3.2 | `[x]` | `NameIndex` builder and Phase 1 case-insensitive full-name matching |
+| 3.3.3 | `[x]` | Phase 2 partial-name matching with ambiguous expansion |
+| 3.3.4 | `[x]` | Phase 3 Levenshtein fuzzy matching (full-name sliding window + single-part) and integration into `main()` |
+
+### 3.4 Sidecar Purge on Fatal Startup Errors
+
+**Status:** `[x]`
+
+`SecureStore` and `SidecarManager` were moved to module scope so the `cleanup()` function is reachable from the top-level `.catch()` handler, not just from signal handlers registered inside `main()`. Ensures the PII sidecar file is always deleted regardless of how the process exits.
+
+### 3.5 AfterTool Unblinded System Message
 
 **Status:** `[ ]` *(someday)*
 

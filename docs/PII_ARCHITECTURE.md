@@ -58,8 +58,8 @@ privacy: {
 
 ### D. Server Lifecycle (`packages/teacher/src/index.ts`)
 
-- **Startup:** `SidecarManager` is instantiated alongside `SecureStore`. No file is written at startup.
-- **Shutdown:** `SidecarManager.purge()` is registered on `SIGINT`, `SIGTERM`, `SIGHUP`, and `uncaughtException` handlers.
+- **Startup:** `SecureStore` and `SidecarManager` are instantiated at module scope. When `blindingEnabled` is true and an active course is set, the server fire-and-forgets a roster pre-fetch that populates `SecureStore` and writes the initial sidecar before any tool call (eliminates the first-message blindspot — see §5.2).
+- **Shutdown:** A module-scope `cleanup()` function calls `SidecarManager.purge()` and `SecureStore.destroy()`. It is registered on `SIGINT`, `SIGTERM`, `SIGHUP`, `uncaughtException`, and the top-level `.catch()` handler for fatal startup errors — ensuring the sidecar is always deleted regardless of how the process exits.
 
 ### E. Tool Call Lifecycle
 
@@ -78,7 +78,13 @@ When `blindingEnabled` is `true`, every reporting tool that tokenizes PII follow
 All three scripts live in `clients/gemini/src/` and compile to `clients/gemini/dist/`. They read from the sidecar path (`~/.cache/canvas-mcp/pii_session.json` by default, or `CANVAS_MCP_SIDECAR_PATH`).
 
 ### `before_model.ts` — Input Blinding
-Intercepts the outgoing `llm_request`; replaces real student names with their tokens. Returns `{}` (no-op) if the sidecar doesn't exist or no names are present. **Critical:** only returns a modified `llm_request` when content actually changed — returning an identical copy triggers a tool-call loop in Gemini CLI.
+Intercepts the outgoing `llm_request`; replaces real student names with their tokens using a three-phase fuzzy matching pipeline (see `clients/gemini/docs/FUZZY_MATCHING_REQUIREMENTS.md`):
+
+1. **Phase 1 — Case-insensitive exact full-name match** using word-boundary regexes, longest-name-first.
+2. **Phase 2 — Partial name match** on unique first/last names (≥4 chars, excluding stopwords). Ambiguous matches expand to all matching tokens (e.g., `"Jane"` → `"[STUDENT_001] and [STUDENT_005]"`).
+3. **Phase 3 — Levenshtein fuzzy match** with sliding windows for full names and single-part matching for typos.
+
+A `NameIndex` is built once per hook invocation from the sidecar mapping, containing pre-compiled regexes and unique-part maps. Returns `{}` (no-op) if the sidecar doesn't exist or no names are present. **Critical:** only returns a modified `llm_request` when content actually changed — returning an identical copy triggers a tool-call loop in Gemini CLI.
 
 > **Gemini CLI bug:** The hook API's `fromHookLLMRequest` destroys non-text parts (`functionCall`, `functionResponse`) when rebuilding SDK contents from hook messages. A local patch to `hookTranslator.js` is **required** for `before_model` to work with tool-using conversations. See `clients/gemini/patches/gemini-cli-hookTranslator.patch.md` and upstream PR [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340).
 
@@ -113,10 +119,10 @@ Gemini CLI's `hookTranslator.js` has a bug in `fromHookLLMRequest`: when a `Befo
 
 `SidecarManager` is fully isolated — removing the sidecar in a future version requires deleting one class and the `sync()` call in reporting tools, with no changes to `SecureStore` or the blinding logic.
 
-### 5.2 First-Message Blindspot
-`before_model` can only blind names that are already in the sidecar. The sidecar doesn't exist until the first blinded tool call completes. If a user types a student's name in their very first message (before any Canvas tool has run), that name reaches the LLM unblinded.
+### 5.2 First-Message Blindspot *(mitigated)*
+`before_model` can only blind names that are already in the sidecar. Previously, the sidecar didn't exist until the first blinded tool call completed, meaning a student name typed in the very first message would reach the LLM unblinded.
 
-**Mitigation:** Run a reporting tool first (e.g., "show me the class grades"). The `[canvas-mcp] Fetched grades for N students.` AfterTool notification confirms the sidecar is ready.
+**Mitigation (implemented — §3.2):** The server now pre-fetches the course roster at startup and writes the sidecar before any tool call. In most cases, `before_model` will have the full name↔token mapping ready by the time the user types their first message. A brief race window remains if the Canvas API is slow or the server just started.
 
 ### 5.3 Opt-In Default vs. Existing Always-On Blinding
 Phase 6 shipped always-on blinding. With opt-in blinding, an existing user who upgrades will have `privacy.blindingEnabled` default to `false`, silently disabling their existing protection. The `ConfigManager` migration detects a missing `privacy` key in the on-disk config and writes `blindingEnabled: true` on first run.
@@ -131,7 +137,7 @@ Gemini CLI renders the tool result box from the raw MCP server response before h
 
 ## 6. Future Work
 
-- **Server-start roster pre-fetch:** On startup (if `blindingEnabled`), silently fetch the enrollment list to populate `SecureStore` and write the initial sidecar. Eliminates the first-message blindspot (§5.2) entirely.
+- ~~**Server-start roster pre-fetch:**~~ ✅ Implemented (§3.2, §D). The server pre-fetches the roster at startup and writes the initial sidecar.
 - **Per-session sidecar files:** Scope the sidecar filename to the session ID (e.g., `pii_<uuid>.json`) and pass the path to hooks via an environment variable. Resolves concurrent instance clobbering (§5.4).
 - **Encrypted sidecar:** Replace plaintext JSON with an AES-256-GCM envelope, key stored in the OS keychain or derived from a user passphrase. Resolves the plaintext-on-disk risk (§5.1).
 - **AfterTool unblinded systemMessage:** The `systemMessage` from `after_tool` is user-terminal-only and never reaches `before_model`, so it is safe to include real student names (e.g., "Fetched grades for Jane Smith, John Doe, ..."). Currently uses count-only messages for simplicity.

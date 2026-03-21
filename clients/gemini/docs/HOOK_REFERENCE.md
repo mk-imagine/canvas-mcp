@@ -177,7 +177,11 @@ The CLI streams responses in small chunks. This frequently results in "Split Tok
 When a split token occurs, the partial fragment (e.g., `[STUD`) appears at the end of **both** the `text` field and the `candidates` field in Chunk N.
 * **Next Turn:** In Chunk N+1, the buffer must be prepended to **both** fields to ensure both form valid tokens (`[STUDENT_001]`) and can be unblinded correctly.
 
-### D. BeforeModel Hook Destroys Non-Text Parts (Gemini CLI Bug)
+### D. BeforeModel Fuzzy Matching
+
+The `before_model` hook uses a `NameIndex`-backed three-phase fuzzy matching pipeline (not simple `replaceAll`) to blind student names in prompts. This handles case variations, partial names (e.g., first name only), typos, and possessives. See [FUZZY_MATCHING_REQUIREMENTS.md](FUZZY_MATCHING_REQUIREMENTS.md) for the full specification.
+
+### E. BeforeModel Hook Destroys Non-Text Parts (Gemini CLI Bug)
 
 > **Status:** Local patch required. Upstream fix: [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340)
 

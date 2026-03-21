@@ -6,7 +6,7 @@ Three hooks are involved:
 
 | Hook | Event | What it does |
 |------|-------|--------------|
-| `before_model` | `BeforeModel` | Replaces real student names in your prompt with session tokens |
+| `before_model` | `BeforeModel` | Replaces real student names in your prompt with session tokens using 3-phase fuzzy matching (case-insensitive, partial name, Levenshtein) |
 | `after_model` | `AfterModel` | Replaces tokens in the model's response with real names |
 | `after_tool` | `AfterTool` | Writes a one-line progress summary to the terminal for canvas-mcp tool calls |
 
@@ -168,8 +168,8 @@ canvas-mcp server                          Gemini CLI process
 ─────────────────                          ──────────────────
 get_grades called
   → tokenize students                      before_model hook
-  → write sidecar ──────────────────────→    reads sidecar
-  → return blinded JSON                      blinds names in prompt (or {} if none)
+  → write sidecar ──────────────────────→    reads sidecar, builds NameIndex
+  → return blinded JSON                      3-phase fuzzy match names in prompt (or {} if none)
                                            model sees only [STUDENT_NNN]
                                            after_tool hook
                                              shows progress systemMessage to user
