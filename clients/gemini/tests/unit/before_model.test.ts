@@ -147,6 +147,97 @@ describe('before_model hook', () => {
     })
   })
 
+  describe('Phase 2 - partial name match', () => {
+    it('unique first name >= 4 chars matched', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Smith': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Smith',
+        'Bob Jones': '[STUDENT_002]',
+        '[STUDENT_002]': 'Bob Jones',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Alice did well', localMapping, index)).toBe('[STUDENT_001] did well')
+    })
+
+    it('short part skipped', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Smith': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Smith',
+        'Bob Jones': '[STUDENT_002]',
+        '[STUDENT_002]': 'Bob Jones',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Bob did well', localMapping, index)).toBe('Bob did well')
+    })
+
+    it('stopword skipped', () => {
+      const localMapping: Record<string, string> = {
+        'Mark Johnson': '[STUDENT_003]',
+        '[STUDENT_003]': 'Mark Johnson',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Mark did well', localMapping, index)).toBe('Mark did well')
+    })
+
+    it('full-name still works for stopword names', () => {
+      const localMapping: Record<string, string> = {
+        'Mark Johnson': '[STUDENT_003]',
+        '[STUDENT_003]': 'Mark Johnson',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Mark Johnson did well', localMapping, index)).toBe('[STUDENT_003] did well')
+    })
+
+    it('ambiguous expansion with possessive', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Smith': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Smith',
+        'Alice Jacobs': '[STUDENT_002]',
+        '[STUDENT_002]': 'Alice Jacobs',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText("alice's grades", localMapping, index)).toBe("[STUDENT_001] and [STUDENT_002]'s grades")
+    })
+
+    it('ambiguous expansion without possessive', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Smith': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Smith',
+        'Alice Jacobs': '[STUDENT_002]',
+        '[STUDENT_002]': 'Alice Jacobs',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('I spoke with alice today', localMapping, index)).toBe('I spoke with [STUDENT_001] and [STUDENT_002] today')
+    })
+
+    it('part not matched inside other words', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Smith': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Smith',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Malice is not Alice', localMapping, index)).toBe('Malice is not [STUDENT_001]')
+    })
+
+    it('unique last name matched', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Johnson': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Johnson',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText('Johnson submitted', localMapping, index)).toBe('[STUDENT_001] submitted')
+    })
+
+    it('possessive on single-token match', () => {
+      const localMapping: Record<string, string> = {
+        'Alice Johnson': '[STUDENT_001]',
+        '[STUDENT_001]': 'Alice Johnson',
+      }
+      const index = buildNameIndex(localMapping)
+      expect(blindText("Johnson's paper", localMapping, index)).toBe("[STUDENT_001]'s paper")
+    })
+  })
+
   describe('backward compatibility', () => {
     it('blindText without index returns same as before', () => {
       const output = blindText("What is Alice Smith's grade?", mockMapping)

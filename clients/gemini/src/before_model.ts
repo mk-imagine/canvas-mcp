@@ -119,6 +119,19 @@ export function blindText(text: string, mapping: Record<string, string>, index?:
   for (const entry of index.entries) {
     result = result.replace(entry.regex, entry.token)
   }
+
+  // Phase 2: partial-name matching (unique parts, ambiguous expansion)
+  for (const [part, regex] of index.partRegexes) {
+    if (index.stopwords.has(part)) continue
+    const tokens = index.uniqueParts.get(part)
+    if (!tokens) continue
+    if (tokens.length === 1) {
+      result = result.replace(regex, (_match, possessive: string | undefined) => tokens[0] + (possessive || ''))
+    } else {
+      result = result.replace(regex, (_match, possessive: string | undefined) => [...tokens].sort().join(' and ') + (possessive || ''))
+    }
+  }
+
   return result
 }
 
