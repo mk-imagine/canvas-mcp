@@ -214,6 +214,43 @@ describe('Integration: import_attendance — parse', () => {
   })
 })
 
+describe('Integration: import_attendance — min_duration filtering', () => {
+  it.skipIf(!hasSeedIds)('excludes participants below min_duration threshold', async () => {
+    const configDir = makeTmpConfigDir()
+    const testStudents = roster.slice(0, 3)
+    const names = testStudents.map((s) => s.name)
+    const durations = [45, 5, 60]
+    const { configPath, csvPath } = makeConfigAndCsv(configDir, names, { durations })
+    const store = new SecureStore()
+    const { mcpClient } = await makeAttendanceClient(configPath, store)
+
+    const result = await mcpClient.callTool({
+      name: 'import_attendance',
+      arguments: {
+        action: 'parse',
+        csv_path: csvPath,
+        assignment_id: attendanceAssignmentId,
+        points: 10,
+        min_duration: 30,
+      },
+    })
+
+    const data = parseResult(result)
+    // Student with 5-minute duration should be excluded
+    expect(data.matched_count).toBe(2)
+    expect(data.absent_count).toBe(roster.length - 2)
+
+    // PII assertion: no real names in response
+    const text = getResultText(result)
+    for (const name of names) {
+      expect(text).not.toContain(name)
+    }
+
+    console.log(`  min_duration=30: ${data.matched_count} matched, ${data.absent_count} absent (1 short-duration excluded)`)
+    store.destroy()
+  })
+})
+
 describe('Integration: import_attendance — submit dry-run', () => {
   it.skipIf(!hasSeedIds)('dry-run returns preview without posting grades', async () => {
     const configDir = makeTmpConfigDir()
