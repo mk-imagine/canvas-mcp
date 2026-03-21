@@ -77,7 +77,8 @@ export class SecureStore {
    * Decrypts and returns the PII for a token, or null if unknown / key destroyed.
    */
   resolve(token: string): { canvasId: number; name: string } | null {
-    const entry = this.map.get(token)
+    const normalized = /^\[.*\]$/.test(token) ? token : `[${token}]`
+    const entry = this.map.get(normalized)
     if (entry === undefined) return null
 
     try {

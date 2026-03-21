@@ -80,6 +80,8 @@ All three scripts live in `clients/gemini/src/` and compile to `clients/gemini/d
 ### `before_model.ts` — Input Blinding
 Intercepts the outgoing `llm_request`; replaces real student names with their tokens. Returns `{}` (no-op) if the sidecar doesn't exist or no names are present. **Critical:** only returns a modified `llm_request` when content actually changed — returning an identical copy triggers a tool-call loop in Gemini CLI.
 
+> **Gemini CLI bug:** The hook API's `fromHookLLMRequest` destroys non-text parts (`functionCall`, `functionResponse`) when rebuilding SDK contents from hook messages. A local patch to `hookTranslator.js` is **required** for `before_model` to work with tool-using conversations. See `clients/gemini/patches/gemini-cli-hookTranslator.patch.md` and upstream PR [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340).
+
 ### `after_model.ts` — Output Unblinding
 Intercepts the `llm_response`; regex-replaces `[STUDENT_NNN]` tokens with real names. Uses a file-backed buffer (`pii_buffer.txt`) to handle tokens split across streaming chunks. Returns `{}` if nothing changed.
 
@@ -95,6 +97,16 @@ Returns a `systemMessage` (e.g., `[canvas-mcp] Fetched grades for 5 students.`) 
 ---
 
 ## 5. Known Tradeoffs & Caveats
+
+### 5.0 Gemini CLI Hook Bug (Local Patch Required)
+
+Gemini CLI's `hookTranslator.js` has a bug in `fromHookLLMRequest`: when a `BeforeModel` hook returns a modified `llm_request`, the method creates brand-new text-only `Content` objects, destroying all non-text parts (`functionCall`, `functionResponse`, `inlineData`, `thought`, etc.) from the original request. This causes the model to lose tool call/response history and loop infinitely when `before_model` blinds a student name.
+
+**Root cause:** `toHookLLMRequest` intentionally filters SDK contents to text-only messages (documented design for a simplified hook API). But `fromHookLLMRequest` does not reverse this — it replaces all contents instead of merging text changes back into the original structure.
+
+**Impact:** Student-specific queries (e.g., "get student1's grades") cause an infinite loop. Class-level queries work because no blinding is needed and the hook returns `{}`, preserving the original request.
+
+**Fix:** A local patch to `hookTranslator.js` is required. The patch modifies `fromHookLLMRequest` to merge hook text back into `baseRequest.contents`, preserving non-text parts. See `clients/gemini/patches/gemini-cli-hookTranslator.patch.md`. Upstream PR: [google-gemini/gemini-cli#23340](https://github.com/google-gemini/gemini-cli/pull/23340).
 
 ### 5.1 Sidecar is Plaintext on Disk
 `SecureStore` holds PII encrypted in memory (AES-256-GCM). The sidecar is a plaintext copy of the same data. `600` permissions protect against other OS users but not root, forensic disk analysis, or backup tools.
