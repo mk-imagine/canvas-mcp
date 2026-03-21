@@ -52,6 +52,11 @@ export interface MatchResult {
   unmatched: Array<{
     zoomName: string
     duration: number
+    candidates?: Array<{
+      canvasName: string
+      canvasUserId: number
+      distance: number
+    }>
   }>
 }
 

@@ -84,30 +84,40 @@ export function matchAttendance(
     }
 
     // Step 3: Fuzzy Levenshtein matching (full-string + part-to-part)
-    const candidates: Array<{
-      canvasName: string
-      canvasUserId: number
-      distance: number
-    }> = []
+    // Compute distances for all roster entries in a single pass
+    type Candidate = { canvasName: string; canvasUserId: number; distance: number }
+    const candidates: Candidate[] = []
+    const distantCandidates: Candidate[] = []
 
     for (const entry of roster) {
       const distName = bestDistance(cleanedLower, entry.name.toLowerCase())
       const distSortable = bestDistance(cleanedLower, entry.sortableName.toLowerCase())
       const bestDist = Math.min(distName, distSortable)
+      const candidate = { canvasName: entry.name, canvasUserId: entry.userId, distance: bestDist }
 
       if (bestDist < AMBIGUOUS_CEILING) {
-        candidates.push({
-          canvasName: entry.name,
-          canvasUserId: entry.userId,
-          distance: bestDist,
-        })
+        candidates.push(candidate)
+      } else {
+        distantCandidates.push(candidate)
       }
     }
+    distantCandidates.sort((a, b) => a.distance - b.distance)
 
     // Sort candidates by distance (best first)
     candidates.sort((a, b) => a.distance - b.distance)
 
     if (candidates.length > 0 && candidates[0].distance < AUTO_MATCH_THRESHOLD) {
+      // Check for ties — if multiple candidates share the best distance, it's ambiguous
+      const tiedCount = candidates.filter((c) => c.distance === candidates[0].distance).length
+      if (tiedCount > 1) {
+        result.ambiguous.push({
+          zoomName: participant.name,
+          duration: participant.duration,
+          candidates,
+        })
+        continue
+      }
+
       // High-confidence fuzzy match — auto-match and save to nameMap
       const best = candidates[0]
       result.matched.push({
@@ -131,10 +141,11 @@ export function matchAttendance(
       continue
     }
 
-    // Step 4: Unmatched
+    // Step 4: Unmatched — include nearest candidates (if any) for review
     result.unmatched.push({
       zoomName: participant.name,
       duration: participant.duration,
+      candidates: distantCandidates.length > 0 ? distantCandidates : undefined,
     })
   }
 

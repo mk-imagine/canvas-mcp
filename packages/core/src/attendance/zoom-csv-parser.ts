@@ -84,11 +84,15 @@ export function parseZoomCsv(csvContent: string, options?: ZoomCsvOptions): Zoom
   return participants
 }
 
+/** Matches parenthesized content containing a forward slash — pronouns like "he/him", "she/her/ella". */
+const PRONOUN_PARENS_PATTERN = /^.+\/.*$/
+
 /**
  * Parse the Name column value. Zoom uses the format:
  *   "Display Name" or "Display Name (Original Name)"
  *
- * When "(Host)" is the parenthesised part, it is NOT treated as an original name.
+ * Parenthesised content that is a Zoom role marker "(Host)" or looks like
+ * pronouns "(he/him)", "(she/her/ella)" is NOT treated as an original name.
  */
 function parseNameField(raw: string): { displayName: string; originalName: string | null } {
   // Match the last parenthesised group
@@ -97,7 +101,11 @@ function parseNameField(raw: string): { displayName: string; originalName: strin
     const parenContent = match[2].trim()
     // "(Host)" is a Zoom role marker, not an original name
     if (parenContent.toLowerCase() === 'host') {
-      return { displayName: raw, originalName: null }
+      return { displayName: match[1].trim(), originalName: null }
+    }
+    // Pronoun-like content (contains a forward slash) — not an original name
+    if (PRONOUN_PARENS_PATTERN.test(parenContent)) {
+      return { displayName: match[1].trim(), originalName: null }
     }
     return { displayName: match[1].trim(), originalName: parenContent }
   }

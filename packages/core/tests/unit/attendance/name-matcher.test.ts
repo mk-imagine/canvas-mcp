@@ -113,7 +113,7 @@ describe('matchAttendance', () => {
     }
   })
 
-  it('(6) unmatched name — no close match in roster', () => {
+  it('(6) unmatched name — no close match, but includes distant candidates', () => {
     const nameMap = new ZoomNameMap()
     const participants: ZoomParticipant[] = [
       { name: 'xyz123', originalName: null, duration: 20 },
@@ -124,10 +124,15 @@ describe('matchAttendance', () => {
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(0)
     expect(result.unmatched).toHaveLength(1)
-    expect(result.unmatched[0]).toEqual({
-      zoomName: 'xyz123',
-      duration: 20,
-    })
+    expect(result.unmatched[0].zoomName).toBe('xyz123')
+    expect(result.unmatched[0].duration).toBe(20)
+    // Distant candidates should be included for the review file
+    expect(result.unmatched[0].candidates).toBeDefined()
+    expect(result.unmatched[0].candidates!.length).toBeGreaterThan(0)
+    // All candidates should have distance >= 0.5
+    for (const c of result.unmatched[0].candidates!) {
+      expect(c.distance).toBeGreaterThanOrEqual(0.5)
+    }
   })
 
   it('(7) persistent map entry for user not in roster — falls through to fuzzy', () => {
@@ -192,11 +197,12 @@ describe('matchAttendance', () => {
 
     const result = matchAttendance(participants, roster, nameMap)
 
-    // "(Jenny)" lacks a slash so it's kept — won't exact-match "Jane Smith"
-    // but part matching "Jane" and "Smith" should fuzzy-match
-    expect(result.matched).toHaveLength(1)
-    expect(result.matched[0].canvasUserId).toBe(1)
-    expect(result.matched[0].source).toBe('fuzzy')
+    // "(Jenny)" lacks a slash so it's kept — won't exact-match "Jane Smith".
+    // Part matching "Smith" ties between "Jane Smith" and "John Smith" (both distance 0),
+    // so this correctly becomes ambiguous.
+    expect(result.matched).toHaveLength(0)
+    expect(result.ambiguous).toHaveLength(1)
+    expect(result.ambiguous[0].candidates.length).toBeGreaterThanOrEqual(2)
   })
 
   it('(12) part-to-part matching — first name only matches via parts', () => {
@@ -215,7 +221,23 @@ describe('matchAttendance', () => {
     expect(result.matched[0].source).toBe('fuzzy')
   })
 
-  it('(13) "J. Smith" matches via part-to-part — "Smith" vs "Smith" = 0', () => {
+  it('(13) tied fuzzy match is ambiguous — "Smith" matches multiple roster entries equally', () => {
+    const nameMap = new ZoomNameMap()
+    // "Smith" matches part "Smith" in both "Jane Smith" and "John Smith" at distance 0
+    const participants: ZoomParticipant[] = [
+      { name: 'Smith', originalName: null, duration: 30 },
+    ]
+
+    const result = matchAttendance(participants, roster, nameMap)
+
+    expect(result.matched).toHaveLength(0)
+    expect(result.ambiguous).toHaveLength(1)
+    expect(result.ambiguous[0].zoomName).toBe('Smith')
+    // Should have at least 2 candidates tied at the same distance
+    expect(result.ambiguous[0].candidates.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('(14) "J. Smith" matches via part-to-part — "Smith" vs "Smith" = 0', () => {
     const nameMap = new ZoomNameMap()
     const participants: ZoomParticipant[] = [
       { name: 'J. Smith', originalName: null, duration: 30 },

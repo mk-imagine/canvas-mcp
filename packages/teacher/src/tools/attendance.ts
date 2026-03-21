@@ -160,6 +160,7 @@ export function registerAttendanceTools(
             ...matchResult.unmatched.map((u) => ({
               zoomName: u.zoomName,
               status: 'unmatched' as const,
+              candidates: u.candidates,
             })),
           ]
           reviewFilePath = writeReviewFile(configDir, reviewEntries)

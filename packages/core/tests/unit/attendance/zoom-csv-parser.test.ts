@@ -96,6 +96,42 @@ Alice Johnson,alice@example.com,45`
     const result = parseZoomCsv(csv)
     expect(result).toHaveLength(2)
   })
+
+  it('treats (he/him) as pronouns, not original name', () => {
+    const csv = `Name (original name),Email,Duration (minutes)
+John Smith (he/him),john@example.com,45`
+    const result = parseZoomCsv(csv)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('John Smith')
+    expect(result[0].originalName).toBeNull()
+  })
+
+  it('treats (she/her/ella) as pronouns, not original name', () => {
+    const csv = `Name (original name),Email,Duration (minutes)
+Maria Garcia (she/her/ella),maria@example.com,50`
+    const result = parseZoomCsv(csv)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('Maria Garcia')
+    expect(result[0].originalName).toBeNull()
+  })
+
+  it('treats (they/them) as pronouns, not original name', () => {
+    const csv = `Name (original name),Email,Duration (minutes)
+Alex Jones (they/them),alex@example.com,30`
+    const result = parseZoomCsv(csv)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('Alex Jones')
+    expect(result[0].originalName).toBeNull()
+  })
+
+  it('preserves legitimate original name in parentheses', () => {
+    const csv = `Name (original name),Email,Duration (minutes)
+Bobby (Robert Smith),bob@example.com,60`
+    const result = parseZoomCsv(csv)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('Robert Smith')
+    expect(result[0].originalName).toBe('Robert Smith')
+  })
 })
 
 describe('parseZoomCsv — real Zoom fixture', () => {
