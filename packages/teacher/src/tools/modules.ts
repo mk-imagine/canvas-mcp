@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import Handlebars from 'handlebars'
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   type CanvasClient,
@@ -62,14 +61,11 @@ async function executeRenderables(
   courseId: number,
   moduleId: number,
   renderables: RenderableItem[],
-  config: CanvasTeacherConfig,
   assignmentGroupId?: number
 ): Promise<ExecutionResult> {
   const items_created: CreatedItem[] = []
 
-  const completionReq = config.defaults.completionRequirement === 'min_score'
-    ? { type: 'min_score' as const, min_score: config.defaults.minScore }
-    : { type: config.defaults.completionRequirement as 'must_submit' | 'must_view' }
+  const completionReq = { type: 'min_score' as const, min_score: 1 }
 
   for (const item of renderables) {
     try {
@@ -110,32 +106,6 @@ async function executeRenderables(
           completion_requirement: completionReq,
         })
         items_created.push({ type: 'Assignment', title: item.title, id: assignment.id, module_item_id: mi.id })
-
-      } else if (item.kind === 'exit_card_quiz') {
-        const title = Handlebars.compile(config.exitCardTemplate.title)({ week: String(item.week) })
-        const quiz = await createQuiz(client, courseId, {
-          title,
-          quiz_type: config.exitCardTemplate.quizType,
-          points_possible: config.defaults.exitCardPoints,
-          published: false,
-        })
-        await Promise.all(
-          config.exitCardTemplate.questions.map(q =>
-            createQuizQuestion(client, courseId, quiz.id, {
-              question_name: q.question_name,
-              question_text: q.question_text,
-              question_type: q.question_type,
-              points_possible: q.points_possible ?? 0,
-            })
-          )
-        )
-        const mi = await createModuleItem(client, courseId, moduleId, {
-          type: 'Quiz',
-          title,
-          content_id: quiz.id,
-          completion_requirement: completionReq,
-        })
-        items_created.push({ type: 'Quiz (exit card)', title, id: quiz.id, module_item_id: mi.id })
 
       } else if (item.kind === 'quiz') {
         const quiz = await createQuiz(client, courseId, {
@@ -295,7 +265,7 @@ export function registerModuleTools(
           ? (args.week != null ? `Week ${args.week} | ${args.title}` : args.title)
           : (args.week != null ? `Week ${args.week}` : args.template_name!)
         const mod = await createModule(client, courseId, { name: moduleName })
-        const result = await executeRenderables(client, courseId, mod.id, renderables, config, args.assignment_group_id)
+        const result = await executeRenderables(client, courseId, mod.id, renderables, args.assignment_group_id)
 
         if (result.error) return toJson({ module: { id: mod.id, name: mod.name }, completed_before_failure: result.completed_before_failure, error: result.error })
         if (args.publish) await updateModule(client, courseId, mod.id, { published: true })
@@ -313,7 +283,7 @@ export function registerModuleTools(
         if (args.dry_run) return toJson({ items_preview: renderables, dry_run: true })
 
         const mod = await createModule(client, courseId, { name: args.module_name! })
-        const result = await executeRenderables(client, courseId, mod.id, renderables, config, args.assignment_group_id)
+        const result = await executeRenderables(client, courseId, mod.id, renderables, args.assignment_group_id)
 
         if (result.error) return toJson({ module: { id: mod.id, name: mod.name }, completed_before_failure: result.completed_before_failure, error: result.error })
         if (args.publish) await updateModule(client, courseId, mod.id, { published: true })
@@ -485,7 +455,7 @@ export function registerModuleTools(
       const mod = await createModule(client, destCourseId, { name: moduleName })
 
       const result = await executeRenderables(
-        client, destCourseId, mod.id, renderables, config
+        client, destCourseId, mod.id, renderables
       )
 
       if (result.error) {

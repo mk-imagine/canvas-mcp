@@ -43,6 +43,20 @@ import {
 } from '@canvas-mcp/core'
 import { completionRequirementSchema } from './content.js'
 
+// ── Exit card / assignment defaults (migrated from config) ─────────────────
+const DEFAULT_POINTS_POSSIBLE = 100
+const DEFAULT_SUBMISSION_TYPE = 'online_url'
+const EXIT_CARD_TITLE_TEMPLATE = 'Week {{week}} | Exit Card (5 mins)'
+const EXIT_CARD_QUIZ_TYPE = 'graded_survey' as const
+const EXIT_CARD_POINTS = 0.5
+const EXIT_CARD_QUESTIONS: { question_name: string; question_text: string; question_type: string; points_possible?: number }[] = [
+  { question_name: 'Confidence', question_text: "Rate your confidence with this week's material (1 = very low, 5 = very high).", question_type: 'essay_question' },
+  { question_name: 'Muddiest Point', question_text: 'What is still unclear or confusing from this week?', question_type: 'essay_question' },
+  { question_name: 'Most Valuable', question_text: 'What was the most valuable thing you learned this week?', question_type: 'essay_question' },
+]
+const ASSIGNMENT_DESCRIPTION_TEMPLATE = '<h3><strong><a href="{{notebook_url}}">{{notebook_title}}</a></strong></h3>\n<p>{{instructions}}</p>'
+const SOLUTION_DESCRIPTION_TEMPLATE = '<h3><strong><a href="{{notebook_url}}">View Solution in Colab</a></strong></h3>'
+
 function resolveCourseId(config: CanvasTeacherConfig, override?: number): number {
   const id = override ?? config.program.activeCourseId
   if (id === null) {
@@ -683,7 +697,7 @@ export function registerFindTools(
       if (args.type === 'assignment') {
         let description = args.description
         if (description == null && args.notebook_url != null) {
-          description = renderTemplate(config.assignmentDescriptionTemplate.default, {
+          description = renderTemplate(ASSIGNMENT_DESCRIPTION_TEMPLATE, {
             notebook_url: args.notebook_url,
             notebook_title: args.notebook_title ?? args.name,
             instructions: args.instructions ?? '',
@@ -694,9 +708,9 @@ export function registerFindTools(
             dry_run: true, type: 'assignment',
             preview: {
               name: args.name!,
-              points_possible: args.points_possible ?? config.defaults.pointsPossible,
+              points_possible: args.points_possible ?? DEFAULT_POINTS_POSSIBLE,
               due_at: args.due_at,
-              submission_types: args.submission_types ?? [config.defaults.submissionType],
+              submission_types: args.submission_types ?? [DEFAULT_SUBMISSION_TYPE],
               assignment_group_id: args.assignment_group_id,
               description,
               published: args.published ?? false,
@@ -705,9 +719,9 @@ export function registerFindTools(
         }
         const assignment = await createAssignment(client, courseId, {
           name: args.name!,
-          points_possible: args.points_possible ?? config.defaults.pointsPossible,
+          points_possible: args.points_possible ?? DEFAULT_POINTS_POSSIBLE,
           due_at: args.due_at,
-          submission_types: args.submission_types ?? [config.defaults.submissionType],
+          submission_types: args.submission_types ?? [DEFAULT_SUBMISSION_TYPE],
           assignment_group_id: args.assignment_group_id,
           description,
           published: args.published ?? false,
@@ -725,15 +739,15 @@ export function registerFindTools(
       if (args.type === 'quiz') {
         const useTemplate = args.use_exit_card_template ?? false
         const title = useTemplate
-          ? renderTemplate(config.exitCardTemplate.title, {
+          ? renderTemplate(EXIT_CARD_TITLE_TEMPLATE, {
               week: args.week != null ? String(args.week) : '?',
             })
           : args.title
         if (!title) {
           return toolError('title is required when use_exit_card_template is not set.')
         }
-        const quizType = useTemplate ? config.exitCardTemplate.quizType : (args.quiz_type ?? 'assignment')
-        const pointsPossible = useTemplate ? config.defaults.exitCardPoints : args.points_possible
+        const quizType = useTemplate ? EXIT_CARD_QUIZ_TYPE : (args.quiz_type ?? 'assignment')
+        const pointsPossible = useTemplate ? EXIT_CARD_POINTS : args.points_possible
 
         if (args.dry_run) {
           return toJson({
@@ -761,7 +775,7 @@ export function registerFindTools(
           assignment_group_id: args.assignment_group_id,
           published: args.published ?? false,
         })
-        const questions = useTemplate ? config.exitCardTemplate.questions : (args.questions ?? [])
+        const questions = useTemplate ? EXIT_CARD_QUESTIONS : (args.questions ?? [])
         const createdQuestions = await Promise.all(
           questions.map((q) =>
             createQuizQuestion(client, courseId, quiz.id, {

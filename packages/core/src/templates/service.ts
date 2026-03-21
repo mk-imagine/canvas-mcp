@@ -46,7 +46,6 @@ export type RenderableItem =
   | { kind: 'subheader'; title: string }
   | { kind: 'page'; title: string; body?: string }
   | { kind: 'assignment'; title: string; points: number; due_at: string; submission_types: string[]; description?: string }
-  | { kind: 'exit_card_quiz'; week: number }
   | { kind: 'quiz'; title: string; points: number; due_at: string; quiz_type: string; time_limit?: number; allowed_attempts?: number; questions?: QuizQuestionInput[] }
   | { kind: 'external_url'; title: string; url: string }
 
