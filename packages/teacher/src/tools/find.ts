@@ -39,6 +39,7 @@ import {
   getSyllabus,
   updateCourse,
   smartSearch,
+  type TemplateService,
 } from '@canvas-mcp/core'
 import { completionRequirementSchema } from './content.js'
 
@@ -166,6 +167,10 @@ const createItemSchema = z.object({
     .describe('For type="page" or "module_item": title (required). For type="quiz": optional (or use use_exit_card_template).'),
   body: z.string().optional()
     .describe('For type="page": page body HTML. For type="discussion" or "announcement": body HTML (use message for these).'),
+  template_name: z.string().optional()
+    .describe('For type="page": name of a template in the config templates directory. Mutually exclusive with body. The template must contain a "page.hbs" file.'),
+  template_data: z.record(z.string(), z.unknown()).optional()
+    .describe('For type="page" with template_name: variables to pass to the template renderer.'),
   // assignment
   name: z.string().optional()
     .describe('For type="assignment": assignment title (required).'),
@@ -235,8 +240,8 @@ const createItemSchema = z.object({
 })
 
 const listItemsSchema = z.object({
-  type: z.enum(['modules', 'assignments', 'quizzes', 'pages', 'discussions', 'announcements', 'rubrics', 'assignment_groups', 'module_items'])
-    .describe('Content type to list'),
+  type: z.enum(['modules', 'assignments', 'quizzes', 'pages', 'discussions', 'announcements', 'rubrics', 'assignment_groups', 'module_items', 'templates'])
+    .describe('Content type to list. "templates" returns local template descriptors (no active course required).'),
   module_name: z.string().optional()
     .describe('For type="module_items": module name (case-insensitive partial match, required).'),
   course_id: z.number().optional()
@@ -246,7 +251,8 @@ const listItemsSchema = z.object({
 export function registerFindTools(
   server: McpServer,
   client: CanvasClient,
-  configManager: ConfigManager
+  configManager: ConfigManager,
+  templateService: TemplateService
 ): void {
   // ── find_item ──────────────────────────────────────────────────────────────
 
@@ -650,12 +656,25 @@ export function registerFindTools(
       }
 
       if (args.type === 'page') {
+        if (args.template_name != null && args.body != null) {
+          return toolError('template_name and body are mutually exclusive for type="page". Provide one or the other.')
+        }
+
+        let pageBody: string | undefined = args.body
+        if (args.template_name != null) {
+          try {
+            pageBody = templateService.renderFile(args.template_name, 'page.hbs', args.template_data ?? {})
+          } catch (err) {
+            return toolError(`Template render error: ${String(err)}`)
+          }
+        }
+
         if (args.dry_run) {
-          return toJson({ dry_run: true, type: 'page', preview: { title: args.title!, body: args.body, published: args.published ?? false } })
+          return toJson({ dry_run: true, type: 'page', preview: { title: args.title!, body: pageBody, published: args.published ?? false } })
         }
         const page = await createPage(client, courseId, {
           title: args.title!,
-          body: args.body,
+          body: pageBody,
           published: args.published ?? false,
         })
         return toJson({ id: page.page_id, url: page.url, title: page.title, published: page.published })
@@ -863,6 +882,11 @@ export function registerFindTools(
       inputSchema: listItemsSchema,
     },
     async (args) => {
+      // Short-circuit for local-only types (no active course required)
+      if (args.type === 'templates') {
+        return toJson(templateService.list())
+      }
+
       const config = configManager.read()
       let courseId: number
       try {

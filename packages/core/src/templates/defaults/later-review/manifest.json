@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "name": "Later Review Week",
+  "description": "Review lesson module: overview page, video pages, review assignments, supplemental pages, review quizzes, and a wrap-up exit card quiz.",
+  "variables_schema": {
+    "week": { "type": "number", "required": true },
+    "due_date": { "type": "string", "required": true },
+    "video_pages": { "type": "array", "required": false },
+    "review_assignments": { "type": "array", "required": false },
+    "supplemental_pages": { "type": "array", "required": false },
+    "review_quizzes": { "type": "array", "required": false }
+  },
+  "structure": [
+    { "type": "SubHeader", "title": "OVERVIEW" },
+    { "type": "Page", "title": "Week {{week}} | Overview" },
+    { "type": "SubHeader", "title": "ASSIGNMENTS" },
+    {
+      "for_each": "video_pages",
+      "type": "Page",
+      "title": "Week {{week}} | {{item.title}} Video (~{{item.mins}} mins)"
+    },
+    {
+      "for_each": "review_assignments",
+      "type": "Assignment",
+      "title": "Week {{week}} | Assignment | {{item.title}} ({{item.hours}} hours)",
+      "submission_types": ["online_url"]
+    },
+    {
+      "for_each": "supplemental_pages",
+      "type": "Page",
+      "title": "Week {{week}} | {{item.title}}"
+    },
+    {
+      "for_each": "review_quizzes",
+      "type": "Quiz",
+      "title": "Week {{week}} | {{item.title}} ({{item.hours}} hour) - Can take {{item.attempts}}x",
+      "quiz_type": "assignment"
+    },
+    { "type": "SubHeader", "title": "WRAP-UP" },
+    {
+      "type": "Quiz",
+      "title": "Week {{week}} | Exit Card (5 mins)",
+      "quiz_type": "graded_survey",
+      "time_limit": 5,
+      "points": 0.5,
+      "questions": [
+        { "question_name": "Confidence", "question_text": "Rate your confidence this week.", "question_type": "essay_question" },
+        { "question_name": "Muddiest Point", "question_text": "What is still unclear?", "question_type": "essay_question" }
+      ]
+    }
+  ]
+}

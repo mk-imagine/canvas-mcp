@@ -1,6 +1,8 @@
+import { join, dirname } from 'node:path'
+import { homedir } from 'node:os'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ConfigManager, CanvasClient, SecureStore, SidecarManager, registerContextTools, fetchStudentEnrollments } from '@canvas-mcp/core'
+import { ConfigManager, CanvasClient, SecureStore, SidecarManager, registerContextTools, fetchStudentEnrollments, TemplateService, seedDefaultTemplates } from '@canvas-mcp/core'
 import { registerReportingTools } from './tools/reporting.js'
 import { registerContentTools } from './tools/content.js'
 import { registerModuleTools } from './tools/modules.js'
@@ -14,6 +16,13 @@ async function main() {
   const configPath = configFlagIndex !== -1 ? process.argv[configFlagIndex + 1] : undefined
   const configManager = new ConfigManager(configPath)
   const config = configManager.read()
+
+  // 2.2 — Template Service initialization
+  const defaultConfigDir = join(homedir(), '.config', 'mcp', 'canvas-mcp')
+  const configDir = configPath != null ? dirname(configPath) : defaultConfigDir
+  const templatesDir = join(configDir, 'templates')
+  seedDefaultTemplates(templatesDir)
+  const templateService = new TemplateService(templatesDir)
 
   const sidecarManager = new SidecarManager(config.privacy.sidecarPath, config.privacy.blindingEnabled)
 
@@ -75,9 +84,9 @@ async function main() {
   registerContextTools(server, client, configManager)
   registerReportingTools(server, client, configManager, secureStore, sidecarManager)
   registerContentTools(server, client, configManager)
-  registerModuleTools(server, client, configManager)
+  registerModuleTools(server, client, configManager, templateService)
   registerResetTools(server, client, configManager)
-  registerFindTools(server, client, configManager)
+  registerFindTools(server, client, configManager, templateService)
   await server.connect(new StdioServerTransport())
 }
 

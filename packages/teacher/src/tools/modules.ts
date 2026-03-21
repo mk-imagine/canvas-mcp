@@ -5,6 +5,7 @@ import {
   type CanvasClient,
   type ConfigManager,
   type CanvasTeacherConfig,
+  type TemplateService,
   createPage,
   getPage,
   createAssignment,
@@ -18,7 +19,6 @@ import {
   getModule,
   listModuleItems,
   createModuleItem,
-  renderTemplate,
   type RenderableItem,
   type QuizQuestionInput,
 } from '@canvas-mcp/core'
@@ -188,139 +188,140 @@ async function executeRenderables(
   return { items_created }
 }
 
-// ─── Shared item input schema ─────────────────────────────────────────────────
-
-const itemSchema = z.object({
-  type: z.enum([
-    'coding_assignment', 'download_url', 'reading_page', 'regular_assignment',
-    'manual_assignment', 'video_page', 'review_assignment', 'supplemental_page',
-    'review_quiz', 'assignment',
-  ]),
-  title: z.string().optional(),
-  verb: z.string().optional(),
-  description: z.string().optional(),
-  url: z.string().optional(),
-  hours: z.number().optional(),
-  mins: z.number().optional(),
-  points: z.number().optional(),
-  attempts: z.number().optional(),
-  time_limit: z.number().optional(),
-  notebook_url: z.string().optional(),
-  notebook_title: z.string().optional(),
-  instructions: z.string().optional(),
-})
-
 // ─── registerModuleTools ──────────────────────────────────────────────────────
 
 export function registerModuleTools(
   server: McpServer,
   client: CanvasClient,
-  configManager: ConfigManager
+  configManager: ConfigManager,
+  templateService: TemplateService
 ): void {
   server.registerTool(
     'build_module',
     {
       description: [
-        'Build a Canvas module using one of three templates:',
-        'template="lesson" — create a full lesson module from a template with assignments, quizzes, pages, and subheaders.',
-        'template="solution" — create a solution module that unlocks after the given lesson module with ExternalUrl items.',
-        'template="clone" — clone a module from one course into the active (or specified) destination course.',
-        'Use dry_run=true to preview without making Canvas API calls.',
+        'Build a Canvas module using one of four modes:',
+        'mode="blueprint" — render a named template with supplied variables.',
+        'mode="manual" — create a module from an explicit ordered list of items.',
+        'mode="solution" — create a solution module gated on a prerequisite lesson module.',
+        'mode="clone" — clone a module from one course into the active (or specified) destination course.',
+        'Use list_items(type="templates") to discover available template names and their variable schemas.',
       ].join(' '),
       inputSchema: z.object({
-        template: z.enum(['lesson', 'solution', 'clone'])
-          .describe('Module template: "lesson" creates a full lesson module. "solution" creates a solution module that unlocks after a lesson. "clone" copies a module from another course.'),
-        // lesson + clone shared
-        week: z.number().int().positive().optional()
-          .describe('For template="lesson": week number for title/naming (required). For template="clone": if provided, replaces "Week N" in all titles.'),
-        due_date: z.string().optional()
-          .describe('For template="lesson": due date for graded items, ISO 8601 (required). For template="clone": if provided, applies to all graded items.'),
-        // lesson-specific
-        title: z.string().optional()
-          .describe('Module title. For template="lesson": title suffix (required). For template="solution": full module title (required).'),
-        lesson_template: z.enum(['later-standard', 'later-review', 'earlier-standard', 'earlier-review']).optional()
-          .describe('For template="lesson": template to use for structuring the module (required).'),
-        items: z.array(itemSchema).optional()
-          .describe('For template="lesson": content items to include in the module (required).'),
+        mode: z.enum(['blueprint', 'manual', 'solution', 'clone'])
+          .describe('Module creation mode.'),
+        // blueprint
+        template_name: z.string().optional()
+          .describe('For mode="blueprint": name of the template directory (required).'),
+        variables: z.record(z.string(), z.unknown()).optional()
+          .describe('For mode="blueprint": key/value pairs matching the template variables_schema (required).'),
+        // manual
+        module_name: z.string().optional()
+          .describe('For mode="manual": name of the Canvas module to create (required).'),
+        items: z.array(z.object({
+          kind: z.enum(['subheader', 'page', 'assignment', 'quiz', 'external_url']),
+          title: z.string().optional(),
+          body: z.string().optional(),
+          points: z.number().optional(),
+          due_at: z.string().optional(),
+          submission_types: z.array(z.string()).optional(),
+          description: z.string().optional(),
+          url: z.string().optional(),
+          quiz_type: z.string().optional(),
+          time_limit: z.number().optional(),
+          allowed_attempts: z.number().optional(),
+          questions: z.array(z.object({
+            question_name: z.string(),
+            question_text: z.string(),
+            question_type: z.string(),
+            points_possible: z.number().optional(),
+          })).optional(),
+        })).optional()
+          .describe('For mode="manual": ordered list of items to create in the module (required).'),
+        // blueprint + manual shared
         assignment_group_id: z.number().optional()
-          .describe('For template="lesson": assignment group ID for all assignments created.'),
-        // solution-specific
+          .describe('Assignment group ID for all assignments created.'),
+        // solution
+        title: z.string().optional()
+          .describe('For mode="solution": full module title (required). For mode="blueprint": module title override.'),
         lesson_module_id: z.number().optional()
-          .describe('For template="solution": ID of the prerequisite lesson module (required).'),
+          .describe('For mode="solution": ID of the prerequisite lesson module (required).'),
         unlock_at: z.string().optional()
-          .describe('For template="solution": ISO 8601 date when this module unlocks (required).'),
+          .describe('For mode="solution": ISO 8601 date when this module unlocks (required).'),
         solutions: z.array(z.object({ title: z.string(), url: z.string() })).optional()
-          .describe('For template="solution": solution links to add as module items (required).'),
-        // clone-specific
+          .describe('For mode="solution": solution links to add as module items (required).'),
+        // clone
         source_module_id: z.number().optional()
-          .describe('For template="clone": Canvas module ID to clone (required).'),
+          .describe('For mode="clone": Canvas module ID to clone (required).'),
         source_course_id: z.number().optional()
-          .describe('For template="clone": course ID containing the source module (required).'),
+          .describe('For mode="clone": course ID containing the source module (required).'),
         dest_course_id: z.number().optional()
-          .describe('For template="clone": destination course ID. Defaults to active course.'),
-        // shared optional
+          .describe('For mode="clone": destination course ID. Defaults to active course.'),
+        // blueprint + clone shared
+        week: z.number().optional()
+          .describe('Week number. For blueprint: passed as template variable. For clone: replaces "Week N" in titles.'),
+        due_date: z.string().optional()
+          .describe('ISO 8601 due date. For blueprint: passed as template variable. For clone: overrides all graded item due dates.'),
+        // shared
         publish: z.boolean().optional()
-          .describe('For template="lesson" or "solution": publish the module after creation. Default false.'),
+          .describe('Publish the module after creation. Default false.'),
         dry_run: z.boolean().optional()
-          .describe('For template="lesson" or "solution": preview without creating anything in Canvas.'),
+          .describe('For mode="blueprint" or "solution": preview without creating anything in Canvas.'),
         course_id: z.number().optional()
-          .describe('Canvas course ID. Defaults to active course. Not used for template="clone" (use dest_course_id).'),
+          .describe('Canvas course ID. Defaults to active course.'),
       }),
     },
     async (args) => {
-      if (args.template === 'lesson') {
+      // ── blueprint ─────────────────────────────────────────────────────────
+      if (args.mode === 'blueprint') {
         const config = configManager.read()
         let courseId: number
-        try {
-          courseId = resolveCourseId(config, args.course_id)
-        } catch (err) {
-          return toolError((err as Error).message)
-        }
+        try { courseId = resolveCourseId(config, args.course_id) }
+        catch (err) { return toolError((err as Error).message) }
 
         let renderables: RenderableItem[]
         try {
-          renderables = renderTemplate(
-            args.lesson_template!,
-            args.week!,
-            args.items!,
-            args.due_date!,
-            config
-          )
-        } catch (err) {
-          return toolError(String(err))
-        }
+          const vars: Record<string, unknown> = {
+            ...(args.variables ?? {}),
+            ...(args.week != null ? { week: args.week } : {}),
+            ...(args.due_date != null ? { due_date: args.due_date } : {}),
+          }
+          renderables = templateService.render(args.template_name!, vars)
+        } catch (err) { return toolError(String(err)) }
 
-        if (args.dry_run) {
-          return toJson({ items_preview: renderables, dry_run: true })
-        }
+        if (args.dry_run) return toJson({ items_preview: renderables, dry_run: true })
 
-        const moduleName = `Week ${args.week!} | ${args.title!}`
+        const moduleName = args.title
+          ? (args.week != null ? `Week ${args.week} | ${args.title}` : args.title)
+          : (args.week != null ? `Week ${args.week}` : args.template_name!)
         const mod = await createModule(client, courseId, { name: moduleName })
+        const result = await executeRenderables(client, courseId, mod.id, renderables, config, args.assignment_group_id)
 
-        const result = await executeRenderables(
-          client, courseId, mod.id, renderables, config, args.assignment_group_id
-        )
-
-        if (result.error) {
-          return toJson({
-            module: { id: mod.id, name: mod.name },
-            completed_before_failure: result.completed_before_failure,
-            error: result.error,
-          })
-        }
-
-        if (args.publish) {
-          await updateModule(client, courseId, mod.id, { published: true })
-        }
-
-        return toJson({
-          module: { id: mod.id, name: mod.name },
-          items_created: result.items_created,
-          dry_run: false,
-        })
+        if (result.error) return toJson({ module: { id: mod.id, name: mod.name }, completed_before_failure: result.completed_before_failure, error: result.error })
+        if (args.publish) await updateModule(client, courseId, mod.id, { published: true })
+        return toJson({ module: { id: mod.id, name: mod.name }, items_created: result.items_created, dry_run: false })
       }
 
-      if (args.template === 'solution') {
+      // ── manual ────────────────────────────────────────────────────────────
+      if (args.mode === 'manual') {
+        const config = configManager.read()
+        let courseId: number
+        try { courseId = resolveCourseId(config, args.course_id) }
+        catch (err) { return toolError((err as Error).message) }
+
+        const renderables = (args.items ?? []) as RenderableItem[]
+        if (args.dry_run) return toJson({ items_preview: renderables, dry_run: true })
+
+        const mod = await createModule(client, courseId, { name: args.module_name! })
+        const result = await executeRenderables(client, courseId, mod.id, renderables, config, args.assignment_group_id)
+
+        if (result.error) return toJson({ module: { id: mod.id, name: mod.name }, completed_before_failure: result.completed_before_failure, error: result.error })
+        if (args.publish) await updateModule(client, courseId, mod.id, { published: true })
+        return toJson({ module: { id: mod.id, name: mod.name }, items_created: result.items_created, dry_run: false })
+      }
+
+      // ── solution ──────────────────────────────────────────────────────────
+      if (args.mode === 'solution') {
         const config = configManager.read()
         let courseId: number
         try {
@@ -374,7 +375,7 @@ export function registerModuleTools(
         })
       }
 
-      // template === 'clone'
+      // ── clone ───────────────────────────────────────────────────────────
       const config = configManager.read()
       let destCourseId: number
       try {

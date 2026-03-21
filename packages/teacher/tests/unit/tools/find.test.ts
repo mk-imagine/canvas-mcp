@@ -175,7 +175,12 @@ async function makeFindClient(configPath: string) {
   const configManager = new ConfigManager(configPath)
   const canvasClient = new CanvasClient({ instanceUrl: CANVAS_URL, apiToken: 'tok' })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerFindTools(mcpServer, canvasClient, configManager)
+  const templateService = {
+    list: () => [{ template_name: 'later-standard', name: 'Later Standard Week', description: 'test', variables_schema: {} }],
+    render: () => [],
+    renderFile: () => '<p>rendered</p>',
+  }
+  registerFindTools(mcpServer, canvasClient, configManager, templateService as any)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'test-client', version: '0.0.1' })

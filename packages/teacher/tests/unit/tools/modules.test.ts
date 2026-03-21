@@ -138,11 +138,37 @@ function writeConfig(path: string, overrides: Record<string, unknown> = {}) {
   writeFileSync(path, JSON.stringify(base), 'utf-8')
 }
 
+function makeMockTemplateService() {
+  return {
+    list: () => [
+      { template_name: 'later-standard', name: 'Later Standard Week', description: 'Standard lesson module', variables_schema: {} },
+    ],
+    render: (_templateName: string, variables: Record<string, unknown>) => {
+      const week = variables.week ?? 1
+      const due_at = (variables.due_date as string) ?? ''
+      const codingAssignments = (variables.coding_assignments ?? []) as Array<{ title: string; hours: number }>
+      const items: Array<Record<string, unknown>> = [
+        { kind: 'subheader', title: 'OVERVIEW' },
+        { kind: 'page', title: `Week ${week} | Overview` },
+        { kind: 'subheader', title: 'ASSIGNMENTS' },
+      ]
+      for (const ca of codingAssignments) {
+        items.push({ kind: 'assignment', title: `Week ${week} | Coding Assignment | ${ca.title} (${ca.hours} Hours)`, points: 100, due_at, submission_types: ['online_url'] })
+      }
+      items.push({ kind: 'subheader', title: 'WRAP-UP' })
+      items.push({ kind: 'quiz', title: `Week ${week} | Exit Card (5 mins)`, points: 0.5, due_at, quiz_type: 'graded_survey', time_limit: 5, questions: [{ question_name: 'Confidence', question_text: 'Rate your confidence.', question_type: 'essay_question' }] })
+      return items
+    },
+    renderFile: () => '<p>rendered</p>',
+  }
+}
+
 async function makeTestClient(configPath: string) {
   const configManager = new ConfigManager(configPath)
   const canvasClient = new CanvasClient({ instanceUrl: CANVAS_URL, apiToken: 'tok' })
   const mcpServer = new McpServer({ name: 'test', version: '0.0.1' })
-  registerModuleTools(mcpServer, canvasClient, configManager)
+  const templateService = makeMockTemplateService()
+  registerModuleTools(mcpServer, canvasClient, configManager, templateService as any)
 
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
   const mcpClient = new Client({ name: 'test-client', version: '0.0.1' })
@@ -161,9 +187,9 @@ function getText(result: Awaited<ReturnType<Client['callTool']>>) {
   return (result.content as Array<{ type: string; text: string }>)[0].text
 }
 
-// ─── build_module (lesson) ────────────────────────────────────────────────────
+// ─── build_module (blueprint) ─────────────────────────────────────────────────
 
-describe('build_module (lesson)', () => {
+describe('build_module (blueprint)', () => {
   it('dry_run returns items_preview without Canvas API calls', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
@@ -173,14 +199,13 @@ describe('build_module (lesson)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'lesson',
+          mode: 'blueprint',
+          template_name: 'later-standard',
           week: 2,
-          title: 'Introduction',
-          lesson_template: 'later-standard',
           due_date: '2026-03-01T23:59:00Z',
-          items: [
-            { type: 'coding_assignment', title: 'ML Basics', hours: 3 },
-          ],
+          variables: {
+            coding_assignments: [{ title: 'ML Basics', hours: 3 }],
+          },
           dry_run: true,
         },
       })
@@ -194,10 +219,10 @@ describe('build_module (lesson)', () => {
     expect(kinds).toContain('subheader')
     expect(kinds).toContain('page')
     expect(kinds).toContain('assignment')
-    expect(kinds).toContain('exit_card_quiz')
+    expect(kinds).toContain('quiz')
   })
 
-  it('later-standard creates module, subheaders, overview page, assignment, exit card quiz', async () => {
+  it('creates module with subheaders, overview page, assignment, and exit card quiz', async () => {
     const configPath = makeTmpConfigPath()
     writeConfig(configPath)
 
@@ -229,14 +254,14 @@ describe('build_module (lesson)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'lesson',
+          mode: 'blueprint',
+          template_name: 'later-standard',
           week: 2,
           title: 'Introduction',
-          lesson_template: 'later-standard',
           due_date: '2026-03-01T23:59:00Z',
-          items: [
-            { type: 'coding_assignment', title: 'ML Basics', hours: 3 },
-          ],
+          variables: {
+            coding_assignments: [{ title: 'ML Basics', hours: 3 }],
+          },
         },
       })
     )
@@ -246,39 +271,6 @@ describe('build_module (lesson)', () => {
     expect(data.module.name).toBe('Week 2 | Intro')
     expect(Array.isArray(data.items_created)).toBe(true)
     expect(data.items_created.length).toBe(6)
-  })
-
-  it('earlier-standard creates reminders and video pages', async () => {
-    const configPath = makeTmpConfigPath()
-    writeConfig(configPath)
-
-    mswServer.use(
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules`, () => HttpResponse.json(makeModule({ id: 11 }))),
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/pages`, () => HttpResponse.json(makePage())),
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/assignments`, () => HttpResponse.json(makeAssignment())),
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes`, () => HttpResponse.json(makeQuiz({ id: 601 }))),
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/quizzes/601/questions`, () => HttpResponse.json(makeQuizQuestion())),
-      http.post(`${CANVAS_URL}/api/v1/courses/${COURSE_ID}/modules/11/items`, () => HttpResponse.json(makeModuleItem()))
-    )
-
-    const { mcpClient } = await makeTestClient(configPath)
-    const data = parseResult(
-      await mcpClient.callTool({
-        name: 'build_module',
-        arguments: {
-          template: 'lesson',
-          week: 1,
-          title: 'Startup',
-          lesson_template: 'earlier-standard',
-          due_date: '2026-01-01T00:00:00Z',
-          items: [
-            { type: 'assignment', verb: 'Read', description: 'Docs' },
-            { type: 'video_page', title: 'Intro', mins: 5 }
-          ],
-        },
-      })
-    )
-    expect(data.items_created.length).toBeGreaterThan(5)
   })
 
   it('handles item creation failure gracefully', async () => {
@@ -298,12 +290,13 @@ describe('build_module (lesson)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'lesson',
+          mode: 'blueprint',
+          template_name: 'later-standard',
           week: 1,
-          title: 'Fail Test',
-          lesson_template: 'later-standard',
           due_date: '2026-01-01T00:00:00Z',
-          items: [{ type: 'coding_assignment', title: 'Lab', hours: 1 }],
+          variables: {
+            coding_assignments: [{ title: 'Lab', hours: 1 }],
+          },
         },
       })
     )
@@ -319,34 +312,14 @@ describe('build_module (lesson)', () => {
     const result = await mcpClient.callTool({
       name: 'build_module',
       arguments: {
-        template: 'lesson',
+        mode: 'blueprint',
+        template_name: 'later-standard',
         week: 2,
-        title: 'Test',
-        lesson_template: 'later-standard',
         due_date: '2026-03-01T23:59:00Z',
-        items: [],
+        variables: {},
       },
     })
     expect(getText(result)).toContain('No active course')
-  })
-
-  it('returns toolError when items do not match template', async () => {
-    const configPath = makeTmpConfigPath()
-    writeConfig(configPath)
-    const { mcpClient } = await makeTestClient(configPath)
-
-    const result = await mcpClient.callTool({
-      name: 'build_module',
-      arguments: {
-        template: 'lesson',
-        week: 2,
-        title: 'Test',
-        lesson_template: 'later-standard',
-        due_date: '2026-03-01T23:59:00Z',
-        items: [{ type: 'review_quiz', title: 'Quiz', hours: 1, attempts: 3 }],
-      },
-    })
-    expect(getText(result)).toContain('not accepted by')
   })
 })
 
@@ -378,7 +351,7 @@ describe('build_module (solution)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'solution',
+          mode: 'solution',
           lesson_module_id: 10,
           unlock_at: '2026-03-08T00:00:00Z',
           title: 'Week 2 | Solutions',
@@ -409,7 +382,7 @@ describe('build_module (solution)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'solution',
+          mode: 'solution',
           lesson_module_id: 10,
           unlock_at: '2026-03-08T00:00:00Z',
           title: 'Week 2 | Solutions',
@@ -432,7 +405,7 @@ describe('build_module (solution)', () => {
     const result = await mcpClient.callTool({
       name: 'build_module',
       arguments: {
-        template: 'solution',
+        mode: 'solution',
         lesson_module_id: 10,
         unlock_at: '2026-03-08T00:00:00Z',
         title: 'Test',
@@ -491,7 +464,7 @@ describe('build_module (clone)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'clone',
+          mode: 'clone',
           source_module_id: SOURCE_MODULE_ID,
           source_course_id: SOURCE_COURSE_ID,
           week: 5,
@@ -545,7 +518,7 @@ describe('build_module (clone)', () => {
       await mcpClient.callTool({
         name: 'build_module',
         arguments: {
-          template: 'clone',
+          mode: 'clone',
           source_module_id: SOURCE_MODULE_ID,
           source_course_id: SOURCE_COURSE_ID,
         },
@@ -567,7 +540,7 @@ describe('build_module (clone)', () => {
     const result = await mcpClient.callTool({
       name: 'build_module',
       arguments: {
-        template: 'clone',
+        mode: 'clone',
         source_module_id: SOURCE_MODULE_ID,
         source_course_id: SOURCE_COURSE_ID,
       },
@@ -583,7 +556,7 @@ describe('build_module (clone)', () => {
     const result = await mcpClient.callTool({
       name: 'build_module',
       arguments: {
-        template: 'clone',
+        mode: 'clone',
         source_module_id: SOURCE_MODULE_ID,
         source_course_id: SOURCE_COURSE_ID,
       },

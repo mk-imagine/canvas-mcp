@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "Earlier Standard Week",
+  "description": "Earlier-semester standard module: numbered assignments, reminder assignments, optional video pages, and an exit card quiz.",
+  "variables_schema": {
+    "week": { "type": "number", "required": true },
+    "due_date": { "type": "string", "required": true },
+    "assignments": { "type": "array", "required": false },
+    "video_pages": { "type": "array", "required": false }
+  },
+  "structure": [
+    { "type": "SubHeader", "title": "OVERVIEW" },
+    { "type": "Page", "title": "Week {{week}} | Overview" },
+    { "type": "SubHeader", "title": "TO-DO" },
+    {
+      "for_each": "assignments",
+      "type": "Assignment",
+      "title": "Week {{week}} | Assignment | {{item.verb}}: {{item.description}}",
+      "submission_types": ["online_url"]
+    },
+    {
+      "type": "Assignment",
+      "title": "Week {{week}} | Reminder | Attend Weekly Discussion",
+      "points": 0,
+      "submission_types": ["no_submission"]
+    },
+    {
+      "type": "Assignment",
+      "title": "Week {{week}} | Reminder | Check In With Your Instructor",
+      "points": 0,
+      "submission_types": ["no_submission"]
+    },
+    {
+      "for_each": "video_pages",
+      "type": "Page",
+      "title": "Video {{week}}{{item.letter}} | {{item.title}} (~{{item.mins}} mins)"
+    },
+    {
+      "type": "Quiz",
+      "title": "Week {{week}} | Exit Card (5 mins)",
+      "quiz_type": "graded_survey",
+      "time_limit": 5,
+      "points": 0.5,
+      "questions": [
+        { "question_name": "Confidence", "question_text": "Rate your confidence this week.", "question_type": "essay_question" },
+        { "question_name": "Muddiest Point", "question_text": "What is still unclear?", "question_type": "essay_question" }
+      ]
+    }
+  ]
+}
