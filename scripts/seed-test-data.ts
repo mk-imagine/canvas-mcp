@@ -198,6 +198,7 @@ async function resetCourse(): Promise<void> {
 
 interface SeedContent {
   assignmentIds: [number, number, number]
+  attendanceAssignmentId: number
   exitCardId: number
   moduleId: number
 }
@@ -231,7 +232,11 @@ async function createContent(): Promise<SeedContent> {
   const a3 = await createAssignment(teacherClient, COURSE_ID, { 
     ...assignmentBase, name: 'Week 1 | Assignment 1.3 | Seed Assignment C', due_at: oneWeekFromNow 
   })
+  const aAttendance = await createAssignment(teacherClient, COURSE_ID, {
+    ...assignmentBase, name: 'Attendance | Seed', submission_types: ['none']
+  })
   console.log(`    Created assignments: ${a1.id} (due 2wk ago), ${a2.id} (due 1wk ago), ${a3.id} (due 1wk from now)`)
+  console.log(`    Created attendance assignment: ${aAttendance.id}`)
 
   const exitCard = await createQuiz(teacherClient, COURSE_ID, {
     title: 'Week 1 | Exit Card',
@@ -267,7 +272,7 @@ async function createContent(): Promise<SeedContent> {
   await updateModule(teacherClient, COURSE_ID, module.id, { published: true })
   console.log(`    Created and published module: ${module.id}`)
 
-  return { assignmentIds: [a1.id, a2.id, a3.id], exitCardId: exitCard.id, moduleId: module.id }
+  return { assignmentIds: [a1.id, a2.id, a3.id], attendanceAssignmentId: aAttendance.id, exitCardId: exitCard.id, moduleId: module.id }
 }
 
 // ─── Step 5.5: Verify student access before submitting ───────────────────────
@@ -381,6 +386,7 @@ function writeSeedIds(content: SeedContent, studentIds: number[]): void {
     CANVAS_TEST_ASSIGNMENT_1_ID: String(content.assignmentIds[0]),
     CANVAS_TEST_ASSIGNMENT_2_ID: String(content.assignmentIds[1]),
     CANVAS_TEST_ASSIGNMENT_3_ID: String(content.assignmentIds[2]),
+    CANVAS_TEST_ATTENDANCE_ASSIGNMENT_ID: String(content.attendanceAssignmentId),
     CANVAS_TEST_EXIT_CARD_ID: String(content.exitCardId),
     CANVAS_TEST_STUDENT_IDS: studentIds.join(','),
   }
