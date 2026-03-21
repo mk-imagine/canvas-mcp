@@ -59,17 +59,24 @@ const originalGrades: Map<number, string | null> = new Map()
 afterAll(async () => {
   if (originalGrades.size === 0) return
   const client = new CanvasClient({ instanceUrl, apiToken })
+  let restored = 0
+  let skipped = 0
   for (const [userId, grade] of originalGrades) {
+    if (grade === null) {
+      skipped++
+      continue
+    }
     try {
       await client.put(
         `/api/v1/courses/${testCourseId}/assignments/${attendanceAssignmentId}/submissions/${userId}`,
-        { submission: { posted_grade: grade ?? '' } }
+        { submission: { posted_grade: grade } }
       )
+      restored++
     } catch {
       console.warn(`  Warning: failed to restore grade for user ${userId}`)
     }
   }
-  console.log(`  Restored ${originalGrades.size} grades on assignment ${attendanceAssignmentId}`)
+  console.log(`  Restored ${restored} grades, skipped ${skipped} ungraded on assignment ${attendanceAssignmentId}`)
 })
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
