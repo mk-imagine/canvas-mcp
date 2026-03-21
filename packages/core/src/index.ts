@@ -31,3 +31,6 @@ export {
 // template system
 export * from './templates/index.js'
 export { seedDefaultTemplates } from './templates/seed.js'
+
+// matching utilities
+export * from './matching/index.js'
