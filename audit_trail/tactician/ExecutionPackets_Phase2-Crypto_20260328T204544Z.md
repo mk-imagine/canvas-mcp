@@ -1,0 +1,17 @@
+# Execution Packets: Phase 2 — Cryptography Layer
+
+## Packet 2.1
+
+| Field | Value |
+|-------|-------|
+| **Packet ID** | 2.1 |
+| **Depends On** | 1.3 |
+| **Prerequisite State** | `RosterStudent` and `RosterFile` types exist in `packages/core/src/roster/types.ts`. Barrel export exists at `packages/core/src/roster/index.ts` and is wired into `packages/core/src/index.ts`. |
+| **Objective** | Implement `RosterCrypto` with AES-256-GCM encrypt/decrypt of the students array. |
+| **Allowed Files** | `packages/core/src/roster/crypto.ts` (new), `packages/core/src/roster/index.ts` (add export) |
+| **Behavioral Intent** | **Positive cases:** (1) Encrypt array of 3 students, decrypt returns identical array. (2) Encrypt empty array `[]`, decrypt returns `[]`. (3) Encrypt with one `RosterCrypto` instance, decrypt with a new instance created with the same 32-byte key bytes succeeds (key is deterministic, not instance-bound). **Negative cases:** (1) Decrypt with a different 32-byte key throws error containing the string `"roster rekey"`. (2) Decrypt with truncated base64 string throws error containing `"decryption failed"` (case-insensitive). (3) Decrypt with empty string throws error. **Edge conditions:** (1) Two `encrypt()` calls with the same students array produce different base64 output strings (random IV per call). (2) Students with Unicode names (e.g., accented characters like `"Jose Garcia"`) round-trip correctly. (3) Array of 1000 students encrypts and decrypts without error. **Blob format:** `base64(IV[12 bytes] + authTag[16 bytes] + ciphertext[variable])`. **API:** Constructor takes `key: Buffer` (32 bytes). `encrypt(students: RosterStudent[]): string` returns base64 string. `decrypt(encrypted: string): RosterStudent[]` returns parsed array. On decrypt failure, throw: `"Roster decryption failed. The encryption key may have changed. Run 'canvas-mcp roster rekey' to re-encrypt with the current key."` **Reference pattern:** `SecureStore` in `packages/core/src/security/secure-store.ts` uses the same AES-256-GCM cipher approach with `createCipheriv`/`createDecipheriv`, 12-byte IV, and `getAuthTag()`. |
+| **Checklist** | 1. Create `packages/core/src/roster/crypto.ts`. 2. Import `createCipheriv`, `createDecipheriv`, `randomBytes` from `node:crypto`. 3. Import `RosterStudent` from `./types.js`. 4. Export class `RosterCrypto`. Constructor stores 32-byte key Buffer. 5. `encrypt(students)`: JSON.stringify students, generate 12-byte IV, create AES-256-GCM cipher, encrypt, get authTag, concatenate `IV + authTag + ciphertext` into single Buffer, return `buffer.toString('base64')`. 6. `decrypt(encrypted)`: `Buffer.from(encrypted, 'base64')`, extract IV (bytes 0-11), authTag (bytes 12-27), ciphertext (bytes 28+), create decipher, setAuthTag, decrypt, JSON.parse result. Wrap in try/catch: on any error throw new Error with the actionable rekey message. 7. Add `export { RosterCrypto } from './crypto.js'` to `packages/core/src/roster/index.ts`. |
+| **Commands** | `npx tsc -p packages/core/tsconfig.build.json --noEmit` |
+| **Pass Condition** | TypeScript compiles with no errors. `RosterCrypto` is importable from `@canvas-mcp/core`. |
+| **Commit Message** | `feat(core): add RosterCrypto with AES-256-GCM encrypt/decrypt` |
+| **Stop / Escalate If** | Buffer concatenation order ambiguity. If `authTag` length is not consistently 16 bytes from Node.js crypto, escalate. |

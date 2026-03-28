@@ -1,0 +1,65 @@
+# Execution Packets: Phase 3 — Key Providers
+
+## Packet 3.1
+
+| Field | Value |
+|-------|-------|
+| **Packet ID** | 3.1 |
+| **Depends On** | 1.3 |
+| **Prerequisite State** | `RosterKeyProvider` interface exists in `packages/core/src/roster/types.ts` with `deriveKey(): Promise<Buffer>`. Barrel export at `packages/core/src/roster/index.ts` is wired into core index. |
+| **Objective** | Implement `FileKeyProvider` that reads a hex-encoded 32-byte key from `roster.key` with `0600` permission validation. |
+| **Allowed Files** | `packages/core/src/roster/key-providers.ts` (new), `packages/core/src/roster/index.ts` (add export) |
+| **Behavioral Intent** | **Positive:** (1) File contains 64 hex characters followed by newline, `deriveKey()` returns a 32-byte Buffer. (2) File with no trailing newline also works. (3) Uppercase hex characters (e.g., `"A1B2..."`) are accepted. (4) File with `0600` permissions succeeds. **Negative:** (1) File does not exist -> throws error containing `"Key file not found"` and generation instructions: `"openssl rand -hex 32 > <path> && chmod 600 <path>"`. (2) File has `0644` permissions -> throws error containing `"insecure permissions"` and instruction `"chmod 600"`. (3) File contains 63 hex chars (odd length / wrong size) -> throws error containing `"invalid key format"`. (4) File contains non-hex characters -> throws error containing `"invalid key format"`. **Edge:** (1) Leading/trailing whitespace (spaces, tabs, newlines) is trimmed before hex validation. (2) Permission check uses `stat.mode & 0o777` to extract permission bits, then compares to `0o600`. **Constructor:** `(keyPath: string)`. |
+| **Checklist** | 1. Create `packages/core/src/roster/key-providers.ts`. 2. Import `readFileSync`, `statSync` from `node:fs`. Import `RosterKeyProvider` from `./types.js`. 3. Export class `FileKeyProvider` implementing `RosterKeyProvider`. Constructor stores `keyPath: string`. 4. `deriveKey()`: (a) Check file existence via try/catch on `statSync` -- if ENOENT, throw with `"Key file not found: <keyPath>. Generate with: openssl rand -hex 32 > <keyPath> && chmod 600 <keyPath>"`. (b) Check `stat.mode & 0o777 !== 0o600` -> throw `"roster.key has insecure permissions. Expected 0600, got <octal>. Run: chmod 600 <keyPath>"`. (c) `readFileSync(keyPath, 'utf-8').trim()`. (d) Validate with regex `/^[0-9a-fA-F]{64}$/` -> if no match, throw `"Invalid key format in <keyPath>. Expected 64 hex characters (32 bytes)."`. (e) Return `Buffer.from(hex, 'hex')`. 5. Add `export { FileKeyProvider } from './key-providers.js'` to barrel. |
+| **Commands** | `npx tsc -p packages/core/tsconfig.build.json --noEmit` |
+| **Pass Condition** | TypeScript compiles. `FileKeyProvider` is importable from `@canvas-mcp/core`. |
+| **Commit Message** | `feat(core): add FileKeyProvider for roster.key` |
+| **Stop / Escalate If** | Permission bit behavior differs across platforms in unexpected ways (the `stat.mode & 0o777` mask should be portable). |
+
+## Packet 3.2
+
+| Field | Value |
+|-------|-------|
+| **Packet ID** | 3.2 |
+| **Depends On** | 3.1 |
+| **Prerequisite State** | `packages/core/src/roster/key-providers.ts` exists with `FileKeyProvider` exported. `RosterKeyProvider` interface available. |
+| **Objective** | Implement `KeychainKeyProvider` for macOS Keychain via `security` CLI. |
+| **Allowed Files** | `packages/core/src/roster/key-providers.ts` (append), `packages/core/src/roster/index.ts` (add export if not already present) |
+| **Behavioral Intent** | **Positive:** (1) First call when no Keychain entry exists: generates `crypto.randomBytes(32)`, stores hex string in Keychain via `security add-generic-password -s canvas-mcp -a roster-key -w <hex> -U`, returns the 32-byte Buffer. (2) Subsequent calls: retrieves hex from Keychain via `security find-generic-password -s canvas-mcp -a roster-key -w`, decodes to Buffer, returns same 32 bytes. (3) Returned Buffer is always exactly 32 bytes. **Negative:** (1) `security` binary not found (ENOENT from `execFile`) -> throws `"macOS Keychain not available (security command not found)"`. (2) Keychain locked or `add-generic-password` fails for other reason -> error propagates with stderr context from the `security` command. **Edge:** (1) Key is stored as 64-char hex string in Keychain. (2) `-U` flag on `add-generic-password` means update-if-exists (idempotent). (3) `find-generic-password` outputs the password on stdout with a trailing newline -- trim before hex decode. (4) Detection of "not found": `security` exits non-zero and stderr contains `"could not be found"` or similar. Use exit code (non-zero) as primary signal. **Helper:** Use `import { execFile } from 'node:child_process'` with `util.promisify`. |
+| **Checklist** | 1. Add `import { execFile as execFileCb } from 'node:child_process'` and `import { promisify } from 'node:util'` at top of file. Create `const execFileAsync = promisify(execFileCb)`. 2. Add `import { randomBytes } from 'node:crypto'`. 3. Export class `KeychainKeyProvider` implementing `RosterKeyProvider`. No constructor args needed. 4. `deriveKey()`: (a) Try `execFileAsync('security', ['find-generic-password', '-s', 'canvas-mcp', '-a', 'roster-key', '-w'])`. On success, trim stdout, `Buffer.from(trimmed, 'hex')`, return. (b) On error: if error code is ENOENT, throw "macOS Keychain not available". If "could not be found" or exit code 44, generate new key: `randomBytes(32)`, `execFileAsync('security', ['add-generic-password', '-s', 'canvas-mcp', '-a', 'roster-key', '-w', key.toString('hex'), '-U'])`, return key. (c) On other errors, throw with context. 5. Add export to barrel if not present. |
+| **Commands** | `npx tsc -p packages/core/tsconfig.build.json --noEmit` |
+| **Pass Condition** | TypeScript compiles. `KeychainKeyProvider` is importable. |
+| **Commit Message** | `feat(core): add KeychainKeyProvider for macOS Keychain` |
+| **Stop / Escalate If** | `security` CLI output format or exit codes are ambiguous for the "not found" case. |
+
+## Packet 3.3
+
+| Field | Value |
+|-------|-------|
+| **Packet ID** | 3.3 |
+| **Depends On** | 3.1 |
+| **Prerequisite State** | `packages/core/src/roster/key-providers.ts` exists with at least `FileKeyProvider`. `RosterKeyProvider` interface available. |
+| **Objective** | Implement `SshAgentKeyProvider` that derives a deterministic AES-256 key by signing a challenge via SSH agent using `ssh2` AgentProtocol. Add `ssh2` dependency. |
+| **Allowed Files** | `packages/core/src/roster/key-providers.ts` (append), `packages/core/src/roster/index.ts` (add export), `packages/core/package.json` (add `ssh2` to dependencies, `@types/ssh2` to devDependencies) |
+| **Behavioral Intent** | **Positive:** (1) SSH agent has an Ed25519 key -> signs challenge `"canvas-mcp:roster-key:v1"` -> SHA-256 of raw signature bytes -> returns 32-byte Buffer. (2) SSH agent has an RSA key -> same flow produces a 32-byte Buffer. (3) Deterministic: same SSH key signing same challenge always produces the same derived AES key. (4) When `fingerprint` is provided, selects the matching key from multiple agent identities. **Negative:** (1) `SSH_AUTH_SOCK` environment variable is not set -> throws `"SSH agent not available (SSH_AUTH_SOCK not set)"`. (2) Agent has only ECDSA keys (no Ed25519 or RSA) -> throws `"ECDSA keys are not supported for roster encryption. Use Ed25519 or RSA."` (3) Agent has zero keys -> throws `"No keys found in SSH agent"`. (4) Fingerprint provided but no key matches -> throws `"No SSH key matching fingerprint <fp> found"`. (5) Agent socket connection error (ECONNREFUSED, ENOENT) -> throws descriptive error including the socket path. **Edge:** (1) When multiple keys exist and no fingerprint is specified, prefer Ed25519 over RSA (select first Ed25519; if none, first RSA). (2) Connection to agent should have a 5-second timeout. (3) Challenge string `"canvas-mcp:roster-key:v1"` is encoded as UTF-8 Buffer before signing. (4) After signing, always clean up the agent connection (close socket). (5) Key type detection: Ed25519 keys have type string starting with `"ssh-ed25519"`, RSA with `"ssh-rsa"`, ECDSA with `"ecdsa-sha2-"`. **Constructor:** `(fingerprint?: string | null)`. Treat `null` same as `undefined` (no filter). |
+| **Checklist** | 1. Add `"ssh2": "^1.16.0"` to `dependencies` and `"@types/ssh2": "^1.15.0"` to `devDependencies` in `packages/core/package.json`. Run `npm install` after. 2. Import `createConnection` from `node:net`, `createHash` from `node:crypto`, and relevant types/classes from `ssh2`. 3. Export class `SshAgentKeyProvider` implementing `RosterKeyProvider`. Constructor stores optional `fingerprint`. 4. `deriveKey()`: (a) Check `process.env.SSH_AUTH_SOCK` -- throw if unset. (b) Create socket via `net.createConnection(SSH_AUTH_SOCK)`. (c) Wrap in promise with 5s timeout. (d) Use `ssh2` `AgentProtocol` (or `OpenSSHAgent`) to request identities. (e) Filter by key type: reject ECDSA, prefer Ed25519, fallback to RSA. Apply fingerprint filter if provided. (f) Sign `Buffer.from("canvas-mcp:roster-key:v1", "utf-8")` with selected key. (g) `createHash('sha256').update(signatureBytes).digest()` -> 32-byte Buffer. (h) Clean up: destroy socket. 5. Add export to barrel. |
+| **Commands** | `npm install` (from repo root), `npx tsc -p packages/core/tsconfig.build.json --noEmit` |
+| **Pass Condition** | TypeScript compiles. `SshAgentKeyProvider` is importable. `ssh2` and `@types/ssh2` appear in `packages/core/package.json`. |
+| **Commit Message** | `feat(core): add SshAgentKeyProvider with Ed25519/RSA support` |
+| **Stop / Escalate If** | `ssh2` does not export an `AgentProtocol` or equivalent class for direct agent communication. ESM import of `ssh2` fails (it may be CommonJS-only — may need `createRequire` pattern like `posix-node` in `secure-store.ts`). |
+
+## Packet 3.4
+
+| Field | Value |
+|-------|-------|
+| **Packet ID** | 3.4 |
+| **Depends On** | 3.1, 3.2, 3.3, 1.2 |
+| **Prerequisite State** | `FileKeyProvider`, `KeychainKeyProvider`, `SshAgentKeyProvider` all exist in `key-providers.ts`. `CanvasTeacherConfig` has `security.rosterKeyFingerprint`. |
+| **Objective** | Implement `createKeyProvider` factory function that walks the SSH agent -> macOS Keychain -> file key fallback chain. |
+| **Allowed Files** | `packages/core/src/roster/key-providers.ts` (append), `packages/core/src/roster/index.ts` (add export) |
+| **Behavioral Intent** | **Positive:** (1) `SSH_AUTH_SOCK` is set and agent has a valid Ed25519 key -> returns `SshAgentKeyProvider` instance, logs `"[roster] Using SSH agent key provider\n"` to stderr. (2) `SSH_AUTH_SOCK` not set, `process.platform === 'darwin'`, Keychain accessible -> returns `KeychainKeyProvider`, logs `"[roster] Using macOS Keychain key provider\n"`. (3) Neither SSH agent nor Keychain available -> returns `FileKeyProvider` for `join(configDir, 'roster.key')`, logs `"[roster] Using file key provider\n"`. (4) Each selection logs exactly one line to stderr via `process.stderr.write`. **Negative:** (1) SSH agent is available but has only ECDSA keys -> error caught, falls through to Keychain. (2) SSH agent connection error -> caught, falls through. (3) Keychain `security` command fails -> caught, falls through to file provider. **Edge:** (1) `config.security.rosterKeyFingerprint` is `null` -> passed to `SshAgentKeyProvider` as `null` (no fingerprint filter). (2) On Linux (`process.platform !== 'darwin'`), Keychain step is skipped entirely. (3) `FileKeyProvider` is constructed but `deriveKey()` is NOT called during selection -- it's the terminal fallback, validated only when the caller uses it. (4) Stderr prefix `[roster]` is consistent with `[secure-store]` pattern used in `secure-store.ts`. **Signature:** `export async function createKeyProvider(config: CanvasTeacherConfig, configDir: string): Promise<RosterKeyProvider>`. |
+| **Checklist** | 1. Add `import { join } from 'node:path'` if not already imported. Import `CanvasTeacherConfig` from config schema. 2. Export `async function createKeyProvider(config: CanvasTeacherConfig, configDir: string): Promise<RosterKeyProvider>`. 3. Step 1: if `process.env.SSH_AUTH_SOCK`, try `new SshAgentKeyProvider(config.security.rosterKeyFingerprint)`, call `await provider.deriveKey()` to validate, log to stderr, return. Catch any error and continue. 4. Step 2: if `process.platform === 'darwin'`, try `new KeychainKeyProvider()`, call `await provider.deriveKey()` to validate, log to stderr, return. Catch any error and continue. 5. Step 3: construct `new FileKeyProvider(join(configDir, 'roster.key'))`, log to stderr, return (no validation call). 6. Add export to barrel. |
+| **Commands** | `npx tsc -p packages/core/tsconfig.build.json --noEmit` |
+| **Pass Condition** | TypeScript compiles. `createKeyProvider` is importable from `@canvas-mcp/core`. |
+| **Commit Message** | `feat(core): add createKeyProvider factory with fallback chain` |
+| **Stop / Escalate If** | Async validation in the fallback chain introduces unexpected error propagation issues. |
