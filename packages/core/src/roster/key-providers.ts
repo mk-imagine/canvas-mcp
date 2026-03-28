@@ -1,6 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 
 import type { RosterKeyProvider } from './types.js'
@@ -128,5 +129,155 @@ export class KeychainKeyProvider implements RosterKeyProvider {
     ])
 
     return key
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SshAgentKeyProvider
+// ---------------------------------------------------------------------------
+
+// ssh2 is a CJS-only package; use createRequire to load it in this ESM module.
+const _require = createRequire(import.meta.url)
+const { OpenSSHAgent } = _require('ssh2') as typeof import('ssh2')
+
+const SSH_AGENT_CHALLENGE = 'canvas-mcp:roster-key:v1'
+const SSH_AGENT_TIMEOUT_MS = 5_000
+
+// Type guard: OpenSSHAgent always returns ParsedKey entries, but the @types/ssh2
+// IdentityCallback is typed as KnownPublicKeys<T> = Array<T | PublicKeyEntry>.
+// This guard narrows to ParsedKey so we can access .type and .getPublicSSH().
+function isParsedKey(k: import('ssh2').ParsedKey | import('ssh2').PublicKeyEntry): k is import('ssh2').ParsedKey {
+  return typeof (k as import('ssh2').ParsedKey).type === 'string'
+}
+
+/**
+ * Derives a deterministic AES-256 key by signing a fixed challenge string
+ * via the SSH agent.
+ *
+ * Key derivation:
+ *   challenge = UTF-8 Buffer of "canvas-mcp:roster-key:v1"
+ *   signature = SSH agent signs challenge with the selected key
+ *   AES key   = SHA-256(signature bytes)  →  32-byte Buffer
+ *
+ * Key selection:
+ *   - If `fingerprint` is provided, the matching key is used.
+ *   - Otherwise: first Ed25519 key is preferred; first RSA key is the fallback.
+ *   - ECDSA keys are rejected.
+ *
+ * Requires `SSH_AUTH_SOCK` to be set.
+ */
+export class SshAgentKeyProvider implements RosterKeyProvider {
+  private readonly fingerprint: string | null
+
+  constructor(fingerprint?: string | null) {
+    this.fingerprint = fingerprint ?? null
+  }
+
+  async deriveKey(): Promise<Buffer> {
+    const socketPath = process.env['SSH_AUTH_SOCK']
+    if (!socketPath) {
+      throw new Error('SSH agent not available (SSH_AUTH_SOCK not set)')
+    }
+
+    // Wrap the callback-based agent API in a Promise with a timeout.
+    return new Promise<Buffer>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`SSH agent connection timed out (socket: ${socketPath})`))
+      }, SSH_AGENT_TIMEOUT_MS)
+
+      const done = (err: Error | null, result?: Buffer) => {
+        clearTimeout(timer)
+        if (err) reject(err)
+        else resolve(result!)
+      }
+
+      let agent: InstanceType<typeof OpenSSHAgent>
+      try {
+        agent = new OpenSSHAgent(socketPath)
+      } catch (err) {
+        done(new Error(`SSH agent socket error (${socketPath}): ${String(err)}`))
+        return
+      }
+
+      agent.getIdentities((err, keys) => {
+        if (err) {
+          done(new Error(`SSH agent socket error (${socketPath}): ${err.message}`))
+          return
+        }
+
+        // Narrow all keys to ParsedKey — OpenSSHAgent always returns ParsedKey
+        // entries at runtime; the union with PublicKeyEntry is a @types/ssh2
+        // over-approximation on the base class callback type.
+        const allKeys = (keys ?? []).filter(isParsedKey)
+
+        if (allKeys.length === 0) {
+          done(new Error('No keys found in SSH agent'))
+          return
+        }
+
+        // Fingerprint matching — SHA-256 of the raw public key blob, formatted
+        // as "SHA256:<base64>", matching the output of `ssh-keygen -lf`.
+        let selectedKey: import('ssh2').ParsedKey | undefined
+
+        if (this.fingerprint !== null) {
+          selectedKey = allKeys.find((k) => {
+            const raw = k.getPublicSSH()
+            const fp = 'SHA256:' + createHash('sha256').update(raw).digest('base64')
+            return fp === this.fingerprint
+          })
+          if (!selectedKey) {
+            done(new Error(`No SSH key matching fingerprint ${this.fingerprint} found`))
+            return
+          }
+        } else {
+          // Prefer first Ed25519, then first RSA; reject if only ECDSA present.
+          const ed25519 = allKeys.find((k) => k.type === 'ssh-ed25519')
+          const rsa = allKeys.find((k) => k.type === 'ssh-rsa')
+          const hasNonEcdsa = ed25519 ?? rsa
+
+          if (!hasNonEcdsa) {
+            // All keys are ECDSA (or ssh-dss) — check specifically for ECDSA
+            const hasEcdsa = allKeys.some((k) => k.type.startsWith('ecdsa-sha2-'))
+            if (hasEcdsa) {
+              done(new Error(
+                'ECDSA keys are not supported for roster encryption. Use Ed25519 or RSA.',
+              ))
+              return
+            }
+            // No supported key type at all — report no usable keys
+            done(new Error('No keys found in SSH agent'))
+            return
+          }
+
+          selectedKey = ed25519 ?? rsa!
+        }
+
+        // Check that the selected key is not ECDSA (relevant for fingerprint path)
+        if (selectedKey.type.startsWith('ecdsa-sha2-')) {
+          done(new Error(
+            'ECDSA keys are not supported for roster encryption. Use Ed25519 or RSA.',
+          ))
+          return
+        }
+
+        const challenge = Buffer.from(SSH_AGENT_CHALLENGE, 'utf-8')
+
+        agent.sign(selectedKey, challenge, (signErr, signature) => {
+          if (signErr) {
+            done(new Error(`SSH agent signing failed: ${signErr.message}`))
+            return
+          }
+
+          if (!signature) {
+            done(new Error('SSH agent returned empty signature'))
+            return
+          }
+
+          // SHA-256 of the raw signature bytes → 32-byte AES key
+          const aesKey = createHash('sha256').update(signature).digest()
+          done(null, aesKey)
+        })
+      })
+    })
   }
 }
