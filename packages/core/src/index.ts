@@ -38,3 +38,6 @@ export * from './matching/index.js'
 
 // attendance
 export * from './attendance/index.js'
+
+// roster
+export * from './roster/index.js'
