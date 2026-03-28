@@ -1,6 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { matchAttendance, stripPronouns, bestDistance } from '../../../src/attendance/name-matcher.js'
-import { ZoomNameMap } from '../../../src/attendance/zoom-name-map.js'
 import type { ZoomParticipant, RosterEntry } from '../../../src/attendance/types.js'
 
 describe('matchAttendance', () => {
@@ -12,14 +11,14 @@ describe('matchAttendance', () => {
   ]
 
   it('(1) persistent map hit — known mapping matches immediately', () => {
-    const nameMap = new ZoomNameMap()
-    nameMap.set('jsmith_zoom', 1)
+    const aliasMap = new Map<string, number>([['jsmith_zoom', 1]])
+    const onAutoMatch = vi.fn()
 
     const participants: ZoomParticipant[] = [
       { name: 'jsmith_zoom', originalName: null, duration: 45 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap, onAutoMatch)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0]).toEqual({
@@ -31,15 +30,17 @@ describe('matchAttendance', () => {
     })
     expect(result.ambiguous).toHaveLength(0)
     expect(result.unmatched).toHaveLength(0)
+    // Map hit — onAutoMatch should NOT be called
+    expect(onAutoMatch).not.toHaveBeenCalled()
   })
 
   it('(2) exact case-insensitive match on name field', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'jane smith', originalName: null, duration: 50 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0]).toEqual({
@@ -52,12 +53,12 @@ describe('matchAttendance', () => {
   })
 
   it('(3) exact match on sortableName field', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'Smith, Jane', originalName: null, duration: 55 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0]).toEqual({
@@ -70,13 +71,14 @@ describe('matchAttendance', () => {
   })
 
   it('(4) high-confidence fuzzy match — auto-matches with distance < 0.45', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
+    const onAutoMatch = vi.fn()
     // "Jane Smth" vs "Jane Smith" -- edit distance 1, max length 10 => 0.1
     const participants: ZoomParticipant[] = [
       { name: 'Jane Smth', originalName: null, duration: 40 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap, onAutoMatch)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0]).toEqual({
@@ -86,12 +88,12 @@ describe('matchAttendance', () => {
       duration: 40,
       source: 'fuzzy',
     })
-    // High-confidence fuzzy match should be auto-saved to nameMap
-    expect(nameMap.get('Jane Smth')).toBe(1)
+    // High-confidence fuzzy match should invoke onAutoMatch callback
+    expect(onAutoMatch).toHaveBeenCalledWith('Jane Smth', 1)
   })
 
   it('(5) ambiguous fuzzy match — distance between 0.45 and 0.5', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     // "Jxxx Smythson" — part "Smythson" vs "Smith" = lev 4/8 = 0.5,
     // so best part distance is 0.5 which equals AMBIGUOUS_CEILING.
     // Full-string is distant. Lands just at the edge — no candidates below 0.5.
@@ -102,7 +104,7 @@ describe('matchAttendance', () => {
       { name: 'Jxxx Smythsn', originalName: null, duration: 30 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(1)
@@ -114,12 +116,12 @@ describe('matchAttendance', () => {
   })
 
   it('(6) unmatched name with no nearby candidates — no candidates shown', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'xyz123', originalName: null, duration: 20 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(0)
@@ -131,7 +133,7 @@ describe('matchAttendance', () => {
   })
 
   it('(6b) unmatched name with nearby candidates — shows candidates below 0.8 only', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     // "Zxqy Johanxxy" — all best part distances >= 0.5 (unmatched), but
     // some are < 0.8 (John Smith at 0.5, Alice Johnson at 0.5, Jane Smith at 0.625).
     // Bob Williams at 0.875 should be excluded.
@@ -139,7 +141,7 @@ describe('matchAttendance', () => {
       { name: 'Zxqy Johanxxy', originalName: null, duration: 20 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.unmatched).toHaveLength(1)
     expect(result.unmatched[0].candidates).toBeDefined()
@@ -153,15 +155,15 @@ describe('matchAttendance', () => {
   })
 
   it('(7) persistent map entry for user not in roster — falls through to fuzzy', () => {
-    const nameMap = new ZoomNameMap()
     // Map points to userId 999 which is not in roster
-    nameMap.set('Jane Smth', 999)
+    // Key must be lowercase — Map does not auto-lowercase unlike ZoomNameMap
+    const aliasMap = new Map<string, number>([['jane smth', 999]])
 
     const participants: ZoomParticipant[] = [
       { name: 'Jane Smth', originalName: null, duration: 35 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     // Should NOT match via map (user 999 not in roster)
     // Should fall through to fuzzy and match "Jane Smith" (distance ~0.1)
@@ -171,8 +173,8 @@ describe('matchAttendance', () => {
   })
 
   it('(8) empty participants list — returns empty result', () => {
-    const nameMap = new ZoomNameMap()
-    const result = matchAttendance([], roster, nameMap)
+    const aliasMap = new Map<string, number>()
+    const result = matchAttendance([], roster, aliasMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(0)
@@ -180,13 +182,13 @@ describe('matchAttendance', () => {
   })
 
   it('(9) empty roster — all participants unmatched', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'Jane Smith', originalName: null, duration: 50 },
       { name: 'John Smith', originalName: null, duration: 45 },
     ]
 
-    const result = matchAttendance(participants, [], nameMap)
+    const result = matchAttendance(participants, [], aliasMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(0)
@@ -194,12 +196,12 @@ describe('matchAttendance', () => {
   })
 
   it('(10) pronoun suffix stripped — exact match after removing "(he/him)"', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'Jane Smith (she/her)', originalName: null, duration: 50 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0].canvasUserId).toBe(1)
@@ -207,12 +209,12 @@ describe('matchAttendance', () => {
   })
 
   it('(11) parenthesized token without slash is kept — tiebreaker resolves via full-string distance', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'Jane (Jenny) Smith', originalName: null, duration: 50 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     // "(Jenny)" lacks a slash so it's kept — won't exact-match "Jane Smith".
     // Part matching "Smith" ties between "Jane Smith" and "John Smith" (both distance 0),
@@ -225,14 +227,14 @@ describe('matchAttendance', () => {
   })
 
   it('(12) part-to-part matching — first name only matches via parts', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     // "Alice" alone: full-string distance to "Alice Johnson" is high,
     // but part "Alice" vs "Alice" = 0
     const participants: ZoomParticipant[] = [
       { name: 'Alice', originalName: null, duration: 40 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0].canvasUserId).toBe(3)
@@ -241,13 +243,13 @@ describe('matchAttendance', () => {
   })
 
   it('(13) tied fuzzy match is ambiguous — "Smith" matches multiple roster entries equally', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     // "Smith" matches part "Smith" in both "Jane Smith" and "John Smith" at distance 0
     const participants: ZoomParticipant[] = [
       { name: 'Smith', originalName: null, duration: 30 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     expect(result.matched).toHaveLength(0)
     expect(result.ambiguous).toHaveLength(1)
@@ -257,12 +259,12 @@ describe('matchAttendance', () => {
   })
 
   it('(14) "J. Smith" matches via part-to-part — "Smith" vs "Smith" = 0', () => {
-    const nameMap = new ZoomNameMap()
+    const aliasMap = new Map<string, number>()
     const participants: ZoomParticipant[] = [
       { name: 'J. Smith', originalName: null, duration: 30 },
     ]
 
-    const result = matchAttendance(participants, roster, nameMap)
+    const result = matchAttendance(participants, roster, aliasMap)
 
     // "Smith" part matches exactly against both Jane Smith and John Smith,
     // so this becomes ambiguous (two candidates at distance 0)
